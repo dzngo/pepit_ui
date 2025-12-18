@@ -118,7 +118,11 @@ def get_tau_grid(
     for i, gamma_value in enumerate(gamma_values):
         for j, n_value in enumerate(n_values):
             try:
-                raw = spec.algo(float(gamma_value), float(n_value), **other_params)
+                raw = spec.algo(
+                    gamma=float(gamma_value),
+                    n=float(n_value),
+                    **other_params,
+                )
                 tau_grid[i, j] = float(np.asarray(raw).reshape(-1)[0])
             except AlgorithmEvaluationError as exc:
                 warnings.add(f"{spec.name}: {exc}")

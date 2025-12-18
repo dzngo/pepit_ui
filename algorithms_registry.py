@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List
 
 from PEPit import PEP
-from PEPit.functions import SmoothConvexFunction
+from PEPit.functions import SmoothConvexFunction, ConvexLipschitzFunction
 
 
 ArrayAlgo = Callable[..., float]
@@ -91,6 +91,44 @@ def gradient_descent(
     return float(tau)
 
 
+def subgradient_method(M, n, gamma, wrapper="cvxpy", solver=None):
+    # Instantiate PEP
+    problem = PEP()
+
+    # Declare a convex lipschitz function
+    func = problem.declare_function(ConvexLipschitzFunction, M=M)
+
+    # Start by defining its unique optimal point xs = x_* and corresponding function value fs = f_*
+    xs = func.stationary_point()
+    fs = func(xs)
+
+    # Then define the starting point x0 of the algorithm
+    x0 = problem.set_initial_point()
+
+    # Set the initial constraint that is the distance between x0 and xs
+    problem.set_initial_condition((x0 - xs) ** 2 <= 1)
+
+    # Run n steps of the subgradient method
+    x = x0
+    gx, fx = func.oracle(x)
+
+    for _ in range(int(n)):
+        problem.set_performance_metric(fx - fs)
+        x = x - gamma * gx
+        gx, fx = func.oracle(x)
+
+    # Set the performance metric to the function value accuracy
+    problem.set_performance_metric(fx - fs)
+
+    # Solve the PEP
+    tau = problem.solve(wrapper=wrapper, solver=solver, verbose=0)
+    if tau is None:
+        raise AlgorithmEvaluationError(
+            "Solver failed to find a feasible tau for gradient_descent with these hyperparameters."
+        )
+    return float(tau)
+
+
 ALGORITHMS: Dict[str, AlgorithmSpec] = {
     "gradient_descent": AlgorithmSpec(
         name="gradient_descent",
@@ -103,6 +141,22 @@ ALGORITHMS: Dict[str, AlgorithmSpec] = {
                 min_value=1,
                 max_value=5,
                 default=1,
+                step=1,
+                value_type="int",
+            ),
+        ],
+    ),
+    "subgradient_method": AlgorithmSpec(
+        name="subgradient_method",
+        description="x = x - gamma * func.oracle(x)",
+        algo=subgradient_method,
+        hyperparameters=[
+            HyperparameterSpec(
+                name="M",
+                label="M (Lipschitz)",
+                min_value=1,
+                max_value=5,
+                default=2,
                 step=1,
                 value_type="int",
             ),
