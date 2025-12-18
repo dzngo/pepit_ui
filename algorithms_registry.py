@@ -7,10 +7,10 @@ from PEPit import PEP
 from PEPit.functions import SmoothConvexFunction
 
 
-ArrayFunc = Callable[..., float]
+ArrayAlgo = Callable[..., float]
 
 
-class FunctionEvaluationError(RuntimeError):
+class AlgorithmEvaluationError(RuntimeError):
     """Raised when a solver-backed function cannot return tau."""
 
 
@@ -26,10 +26,10 @@ class HyperparameterSpec:
 
 
 @dataclass
-class FunctionSpec:
+class AlgorithmSpec:
     name: str
     description: str
-    func: ArrayFunc
+    algo: ArrayAlgo
     hyperparameters: List[HyperparameterSpec]
 
 
@@ -86,17 +86,17 @@ def gradient_descent(
     # Solve the PEP
     tau = problem.solve(wrapper=wrapper, solver=solver, verbose=0)
     if tau is None:
-        raise FunctionEvaluationError(
+        raise AlgorithmEvaluationError(
             "Solver failed to find a feasible tau for gradient_descent with these hyperparameters."
         )
     return float(tau)
 
 
-FUNCTIONS: Dict[str, FunctionSpec] = {
-    "gradient_descent": FunctionSpec(
+ALGORITHMS: Dict[str, AlgorithmSpec] = {
+    "gradient_descent": AlgorithmSpec(
         name="gradient_descent",
         description="x = x - gamma * func.gradient(x)",
-        func=gradient_descent,
+        algo=gradient_descent,
         hyperparameters=[
             HyperparameterSpec(
                 name="L",
