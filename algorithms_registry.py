@@ -2,7 +2,6 @@
 from dataclasses import dataclass
 from typing import Callable, Dict, List
 
-import numpy as np
 from PEPit import PEP
 from PEPit.functions import SmoothConvexFunction
 
