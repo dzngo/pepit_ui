@@ -73,7 +73,7 @@ def _quantize_value(value: float, spec: HyperparameterSpec) -> float:
     return _round_value(float(quantized))
 
 
-def _load_point_cache() -> Dict[Tuple, Tuple[float, str | None]]:
+def _load_point_cache() -> Dict[Tuple, Tuple[float, str | None, Dict[str, Dict[str, float]]]]:
     cached = st.session_state.get(POINT_CACHE_KEY)
     if isinstance(cached, dict):
         return cached
@@ -91,7 +91,9 @@ def _load_point_cache() -> Dict[Tuple, Tuple[float, str | None]]:
     return cached
 
 
-def _save_point_cache(cache: Dict[Tuple, Tuple[float, str | None]]) -> None:
+def _save_point_cache(
+    cache: Dict[Tuple, Tuple[float, str | None, Dict[str, Dict[str, float]]]]
+) -> None:
     tmp_path = POINT_CACHE_PATH.with_suffix(".tmp")
     try:
         with tmp_path.open("wb") as handle:
@@ -161,7 +163,10 @@ def get_tau_grid(
     grid_cache = st.session_state.setdefault("tau_grid_cache", {})
     key = make_cache_key(algo_key, gamma_spec, n_spec, other_params)
     if key in grid_cache:
-        return grid_cache[key]
+        cached = grid_cache[key]
+        if isinstance(cached, tuple) and len(cached) == 6:
+            return cached
+        grid_cache.pop(key, None)
 
     spec = ALGORITHMS[algo_key]
     point_cache = _load_point_cache()
@@ -169,6 +174,7 @@ def get_tau_grid(
     n_values = discrete_values(n_spec)
     tau_grid = np.full((len(gamma_values), len(n_values)), np.nan)
     warnings: set[str] = set()
+    duals_grid = [[{} for _ in range(len(n_values))] for _ in range(len(gamma_values))]
     missing: list[tuple[int, int, float, float, Tuple]] = []
 
     for i, gamma_value in enumerate(gamma_values):
@@ -177,11 +183,16 @@ def get_tau_grid(
             n_key = _quantize_value(float(n_value), n_spec)
             point_key = _point_cache_key(algo_key, other_params, gamma_key, n_key)
             cached_point = point_cache.get(point_key)
-            if cached_point is None:
+            if cached_point is None or not isinstance(cached_point, tuple):
                 missing.append((i, j, float(gamma_value), float(n_value), point_key))
                 continue
-            cached_tau, cached_warning = cached_point
+            if len(cached_point) == 2:
+                cached_tau, cached_warning = cached_point
+                cached_duals = {}
+            else:
+                cached_tau, cached_warning, cached_duals = cached_point
             tau_grid[i, j] = float(cached_tau)
+            duals_grid[i][j] = cached_duals or {}
             if cached_warning:
                 warnings.add(cached_warning)
 
@@ -203,17 +214,22 @@ def get_tau_grid(
                     n=float(n_value),
                     **other_params,
                 )
-                tau_value = float(np.asarray(raw).reshape(-1)[0])
+                if isinstance(raw, tuple) and len(raw) == 2:
+                    tau_raw, duals = raw
+                else:
+                    tau_raw, duals = raw, {}
+                tau_value = float(np.asarray(tau_raw).reshape(-1)[0])
+                duals_grid[i][j] = duals or {}
                 tau_grid[i, j] = tau_value
-                point_cache[point_key] = (tau_value, None)
+                point_cache[point_key] = (tau_value, None, duals or {})
             except AlgorithmEvaluationError as exc:
                 message = f"{spec.name}: {exc}"
                 warnings.add(message)
-                point_cache[point_key] = (float("nan"), message)
+                point_cache[point_key] = (float("nan"), message, {})
             except Exception as exc:
                 message = f"{spec.name}: unexpected error - {exc}"
                 warnings.add(message)
-                point_cache[point_key] = (float("nan"), message)
+                point_cache[point_key] = (float("nan"), message, {})
             completed += 1
             if completed % update_every == 0 or completed == total:
                 fraction = completed / total
@@ -227,7 +243,37 @@ def get_tau_grid(
     if missing:
         _save_point_cache(point_cache)
 
-    grid_cache[key] = (gamma_values, n_values, tau_grid, tuple(sorted(warnings)))
+    dual_fluctuations: Dict[str, Dict[str, float]] = {}
+    dual_values: Dict[str, Dict[str, list[float]]] = {}
+    for row in duals_grid:
+        for point_duals in row:
+            for constraint, values in point_duals.items():
+                for dual_key, dual_value in values.items():
+                    if dual_value is None or not np.isfinite(dual_value):
+                        continue
+                    dual_values.setdefault(constraint, {}).setdefault(dual_key, []).append(float(dual_value))
+    for constraint, key_values in dual_values.items():
+        fluct_map: Dict[str, float] = {}
+        for dual_key, values in key_values.items():
+            arr = np.asarray(values, dtype=float)
+            if arr.size == 0:
+                continue
+            rms = float(np.sqrt(np.mean(arr**2)))
+            if rms <= 0:
+                fluct_map[dual_key] = 0.0
+            else:
+                fluct_map[dual_key] = float(np.std(arr) / rms)
+        if fluct_map:
+            dual_fluctuations[constraint] = fluct_map
+
+    grid_cache[key] = (
+        gamma_values,
+        n_values,
+        tau_grid,
+        tuple(sorted(warnings)),
+        duals_grid,
+        dual_fluctuations,
+    )
     return grid_cache[key]
 
 

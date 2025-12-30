@@ -1,16 +1,33 @@
 # functions_registry.py
 from dataclasses import dataclass
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Tuple
 
 from PEPit import PEP
 from PEPit.functions import SmoothConvexFunction, ConvexLipschitzFunction
 
 
-ArrayAlgo = Callable[..., float]
+ArrayAlgo = Callable[..., Tuple[float, Dict[str, Dict[str, float]]]]
 
 
 class AlgorithmEvaluationError(RuntimeError):
     """Raised when a solver-backed function cannot return tau."""
+
+
+def _dual_key_label(key) -> str:
+    if isinstance(key, tuple):
+        return "|".join(str(part) for part in key)
+    return str(key)
+
+
+def _extract_duals(func) -> Dict[str, Dict[str, float]]:
+    duals: Dict[str, Dict[str, float]] = {}
+    for name, df in func.get_class_constraints_duals().items():
+        try:
+            stacked = df.stack().to_dict()
+        except Exception:
+            stacked = {}
+        duals[name] = {_dual_key_label(k): float(v) for k, v in stacked.items()}
+    return duals
 
 
 @dataclass
@@ -59,7 +76,7 @@ def gradient_descent(
     L: float,
     wrapper: str = "cvxpy",
     solver: str | None = None,
-) -> float:
+) -> Tuple[float, Dict[str, Dict[str, float]]]:
     problem = PEP()
     func = problem.declare_function(SmoothConvexFunction, L=L)
 
@@ -88,7 +105,8 @@ def gradient_descent(
         raise AlgorithmEvaluationError(
             "Solver failed to find a feasible tau for gradient_descent with these hyperparameters."
         )
-    return float(tau)
+    duals = _extract_duals(func)
+    return float(tau), duals
 
 
 def subgradient_method(M, n, gamma, wrapper="cvxpy", solver=None):
@@ -126,7 +144,8 @@ def subgradient_method(M, n, gamma, wrapper="cvxpy", solver=None):
         raise AlgorithmEvaluationError(
             "Solver failed to find a feasible tau for gradient_descent with these hyperparameters."
         )
-    return float(tau)
+    duals = _extract_duals(func)
+    return float(tau), duals
 
 
 ALGORITHMS: Dict[str, AlgorithmSpec] = {

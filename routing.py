@@ -1,4 +1,6 @@
 # routing.py
+import hashlib
+import re
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
@@ -179,6 +181,7 @@ def render_loading_phase(algo_key: str, spec):
     st.session_state["active_settings"] = pending
     st.session_state["pending_settings"] = None
     st.session_state["ui_phase"] = "results"
+    st.session_state[f"dual_selection_{algo_key}"] = {}
     st.session_state[f"gamma_slider_{algo_key}"] = float(gamma_spec.min_value)
     st.session_state[f"n_slider_{algo_key}"] = float(n_spec.min_value)
     st.rerun()
@@ -247,7 +250,7 @@ def render_results_phase(algo_key: str, spec):
         st.session_state["ui_phase"] = "loading"
         st.rerun()
 
-    gamma_values, n_values, tau_grid, cached_warnings = cached
+    gamma_values, n_values, tau_grid, cached_warnings, duals_grid, dual_fluctuations = cached
     gamma_spec = settings["gamma_spec"]
     n_spec = settings["n_spec"]
 
@@ -369,3 +372,117 @@ def render_results_phase(algo_key: str, spec):
         st.warning(
             "Some parameter combinations could not be solved; missing points are shown as gaps.\n" + warning_text
         )
+
+    render_dual_values_panel(
+        algo_key,
+        duals_grid,
+        dual_fluctuations,
+        gamma_idx,
+        n_idx,
+    )
+
+
+def _jet_color(value: float) -> str:
+    value = max(0.0, min(1.0, float(value)))
+    r = max(0.0, min(1.0, 1.5 - abs(4 * value - 3)))
+    g = max(0.0, min(1.0, 1.5 - abs(4 * value - 2)))
+    b = max(0.0, min(1.0, 1.5 - abs(4 * value - 1)))
+    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+
+def _css_escape(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+    return re.sub(r"[\r\n]+", " ", escaped)
+
+
+def _text_color_for_bg(hex_color: str) -> str:
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) != 6:
+        return "#0b0b0b"
+    r = int(hex_color[0:2], 16) / 255.0
+    g = int(hex_color[2:4], 16) / 255.0
+    b = int(hex_color[4:6], 16) / 255.0
+    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return "#f7f7f7" if luminance < 0.55 else "#0b0b0b"
+
+
+def _marker_class(value: str) -> str:
+    digest = hashlib.md5(value.encode("utf-8")).hexdigest()[:10]
+    return f"dual-marker-{digest}"
+
+
+def _dual_selection_state(algo_key: str) -> dict:
+    return st.session_state.setdefault(f"dual_selection_{algo_key}", {})
+
+
+def _toggle_dual_selection(algo_key: str, key: str) -> None:
+    selected = _dual_selection_state(algo_key)
+    selected[key] = not selected.get(key, False)
+
+
+def render_dual_values_panel(
+    algo_key: str,
+    duals_grid: list[list[dict]],
+    dual_fluctuations: dict,
+    gamma_idx: int,
+    n_idx: int,
+) -> None:
+    st.subheader("Dual values")
+    if not dual_fluctuations:
+        st.caption("No dual values available for these settings.")
+        return
+
+    selected = _dual_selection_state(algo_key)
+    current_duals = duals_grid[gamma_idx][n_idx] if duals_grid else {}
+    selected_values = []
+
+    for constraint, fluct_map in sorted(dual_fluctuations.items()):
+        if not fluct_map:
+            continue
+        st.markdown(f"**{constraint}**")
+        max_fluct = max(fluct_map.values()) if fluct_map else 0.0
+        max_fluct = max(max_fluct, 1e-12)
+        keys = sorted(fluct_map.keys(), key=lambda k: fluct_map[k], reverse=True)
+        cols = st.columns(4)
+        for idx, dual_key in enumerate(keys):
+            fluct = fluct_map[dual_key]
+            color = _jet_color(fluct / max_fluct)
+            text_color = _text_color_for_bg(color)
+            button_key = f"dual-btn-{algo_key}-{constraint}-{dual_key}"
+            marker = _marker_class(button_key)
+            selection_key = f"{constraint}::{dual_key}"
+            is_selected = selected.get(selection_key, False)
+            with cols[idx % 4].form(key=f"{button_key}-form"):
+                st.markdown(
+                    f"<div class='{_css_escape(marker)}'></div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f"<style>"
+                    f"div[data-testid='stForm']:has(.{_css_escape(marker)}) button {{"
+                    f"background-color: {color} !important;"
+                    f"border-color: {color} !important;"
+                    f"color: {text_color} !important;"
+                    f"}}"
+                    f"div[data-testid='stForm']:has(.{_css_escape(marker)}) button:hover {{"
+                    f"filter: brightness(0.95);"
+                    f"}}"
+                    f"</style>",
+                    unsafe_allow_html=True,
+                )
+                submitted = st.form_submit_button(
+                    dual_key,
+                    type="primary" if is_selected else "secondary",
+                )
+            if submitted:
+                _toggle_dual_selection(algo_key, selection_key)
+            if is_selected:
+                value = current_duals.get(constraint, {}).get(dual_key)
+                selected_values.append((constraint, dual_key, value))
+
+    st.subheader("Selected dual values")
+    if not selected_values:
+        st.caption("Click a dual value button to list its current value.")
+        return
+    for constraint, dual_key, value in selected_values:
+        st.write(f"{constraint} | {dual_key} = {value}")
