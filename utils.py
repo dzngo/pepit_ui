@@ -1,5 +1,7 @@
 # utils.py
+import pickle
 import time
+from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
@@ -51,6 +53,68 @@ def discrete_values(param: HyperparameterSpec) -> np.ndarray:
     return values
 
 
+POINT_CACHE_PATH = Path(__file__).resolve().parent / ".tau_point_cache.pkl"
+POINT_CACHE_KEY = "tau_point_cache"
+
+
+def _round_value(value: float, *, digits: int = 12) -> float:
+    return float(round(float(value), digits))
+
+
+def _normalize_other_params(other_params: Dict[str, float]) -> Tuple[Tuple[str, float], ...]:
+    return tuple(sorted((name, _round_value(value)) for name, value in other_params.items()))
+
+
+def _quantize_value(value: float, spec: HyperparameterSpec) -> float:
+    idx = value_index(float(value), spec)
+    quantized = spec.min_value + idx * spec.step
+    if spec.value_type == "int":
+        quantized = int(round(quantized))
+    return _round_value(float(quantized))
+
+
+def _load_point_cache() -> Dict[Tuple, Tuple[float, str | None]]:
+    cached = st.session_state.get(POINT_CACHE_KEY)
+    if isinstance(cached, dict):
+        return cached
+    if POINT_CACHE_PATH.exists():
+        try:
+            with POINT_CACHE_PATH.open("rb") as handle:
+                cached = pickle.load(handle)
+        except Exception:
+            cached = {}
+    else:
+        cached = {}
+    if not isinstance(cached, dict):
+        cached = {}
+    st.session_state[POINT_CACHE_KEY] = cached
+    return cached
+
+
+def _save_point_cache(cache: Dict[Tuple, Tuple[float, str | None]]) -> None:
+    tmp_path = POINT_CACHE_PATH.with_suffix(".tmp")
+    try:
+        with tmp_path.open("wb") as handle:
+            pickle.dump(cache, handle)
+        tmp_path.replace(POINT_CACHE_PATH)
+    except Exception:
+        return
+
+
+def _point_cache_key(
+    algo_key: str,
+    other_params: Dict[str, float],
+    gamma_value: float,
+    n_value: float,
+) -> Tuple:
+    return (
+        algo_key,
+        _normalize_other_params(other_params),
+        _round_value(gamma_value),
+        _round_value(n_value),
+    )
+
+
 def make_cache_key(
     algo_key: str,
     gamma_spec: HyperparameterSpec,
@@ -71,7 +135,7 @@ def make_cache_key(
             n_spec.step,
             n_spec.value_type,
         ),
-        tuple(sorted(other_params.items())),
+        _normalize_other_params(other_params),
     )
 
 
@@ -82,9 +146,8 @@ def clear_grid_cache_entry(
     other_params: Dict[str, float],
 ) -> None:
     cache = st.session_state.get("tau_grid_cache")
-    if cache is None:
-        return
-    cache.pop(make_cache_key(algo_key, gamma_spec, n_spec, other_params), None)
+    if cache is not None:
+        cache.pop(make_cache_key(algo_key, gamma_spec, n_spec, other_params), None)
 
 
 def get_tau_grid(
@@ -95,39 +158,62 @@ def get_tau_grid(
     *,
     show_progress: bool,
 ):
-    cache = st.session_state.setdefault("tau_grid_cache", {})
+    grid_cache = st.session_state.setdefault("tau_grid_cache", {})
     key = make_cache_key(algo_key, gamma_spec, n_spec, other_params)
-    if key in cache:
-        return cache[key]
-    if not show_progress:
-        return None
+    if key in grid_cache:
+        return grid_cache[key]
 
     spec = ALGORITHMS[algo_key]
+    point_cache = _load_point_cache()
     gamma_values = discrete_values(gamma_spec)
     n_values = discrete_values(n_spec)
     tau_grid = np.full((len(gamma_values), len(n_values)), np.nan)
     warnings: set[str] = set()
-
-    total = max(len(gamma_values) * len(n_values), 1)
-    completed = 0
-    progress_bar = st.progress(0.0)
-    status_placeholder = st.empty()
-    start = time.perf_counter()
-    update_every = max(total // 100, 1)
+    missing: list[tuple[int, int, float, float, Tuple]] = []
 
     for i, gamma_value in enumerate(gamma_values):
+        gamma_key = _quantize_value(float(gamma_value), gamma_spec)
         for j, n_value in enumerate(n_values):
+            n_key = _quantize_value(float(n_value), n_spec)
+            point_key = _point_cache_key(algo_key, other_params, gamma_key, n_key)
+            cached_point = point_cache.get(point_key)
+            if cached_point is None:
+                missing.append((i, j, float(gamma_value), float(n_value), point_key))
+                continue
+            cached_tau, cached_warning = cached_point
+            tau_grid[i, j] = float(cached_tau)
+            if cached_warning:
+                warnings.add(cached_warning)
+
+    if missing and not show_progress:
+        return None
+
+    if missing:
+        total = max(len(missing), 1)
+        completed = 0
+        progress_bar = st.progress(0.0)
+        status_placeholder = st.empty()
+        start = time.perf_counter()
+        update_every = max(total // 100, 1)
+
+        for i, j, gamma_value, n_value, point_key in missing:
             try:
                 raw = spec.algo(
                     gamma=float(gamma_value),
                     n=float(n_value),
                     **other_params,
                 )
-                tau_grid[i, j] = float(np.asarray(raw).reshape(-1)[0])
+                tau_value = float(np.asarray(raw).reshape(-1)[0])
+                tau_grid[i, j] = tau_value
+                point_cache[point_key] = (tau_value, None)
             except AlgorithmEvaluationError as exc:
-                warnings.add(f"{spec.name}: {exc}")
+                message = f"{spec.name}: {exc}"
+                warnings.add(message)
+                point_cache[point_key] = (float("nan"), message)
             except Exception as exc:
-                warnings.add(f"{spec.name}: unexpected error - {exc}")
+                message = f"{spec.name}: unexpected error - {exc}"
+                warnings.add(message)
+                point_cache[point_key] = (float("nan"), message)
             completed += 1
             if completed % update_every == 0 or completed == total:
                 fraction = completed / total
@@ -136,11 +222,13 @@ def get_tau_grid(
                 progress_bar.progress(fraction)
                 status_placeholder.write(f"Computing grid… {completed}/{total} (eta {eta:.1f}s)")
 
-    progress_bar.empty()
-    status_placeholder.empty()
+        progress_bar.empty()
+        status_placeholder.empty()
+    if missing:
+        _save_point_cache(point_cache)
 
-    cache[key] = (gamma_values, n_values, tau_grid, tuple(sorted(warnings)))
-    return cache[key]
+    grid_cache[key] = (gamma_values, n_values, tau_grid, tuple(sorted(warnings)))
+    return grid_cache[key]
 
 
 def value_index(value: float, spec: HyperparameterSpec) -> int:
