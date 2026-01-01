@@ -390,7 +390,8 @@ DUAL_BUTTON_COLUMNS = 12
 DUAL_BUTTON_MIN_WIDTH = 80
 DUAL_BUTTON_ROW_HEIGHT = 52
 DUAL_SECTION_PADDING = 70
-DUAL_PLOT_HEIGHT = 320
+DUAL_PLOT_HEIGHT = 200
+DUAL_PLOT_COLUMNS = 5
 
 
 def render_dual_values_panel(
@@ -441,7 +442,8 @@ def render_dual_values_panel(
 
     total_buttons = gamma_count + n_count
     rows = (max(total_buttons, 1) + DUAL_BUTTON_COLUMNS - 1) // DUAL_BUTTON_COLUMNS
-    component_height = 140 + rows * DUAL_BUTTON_ROW_HEIGHT + DUAL_SECTION_PADDING * 2 + DUAL_PLOT_HEIGHT * 2
+    plot_rows = (max(total_buttons, 1) + DUAL_PLOT_COLUMNS - 1) // DUAL_PLOT_COLUMNS
+    component_height = 140 + rows * DUAL_BUTTON_ROW_HEIGHT + DUAL_SECTION_PADDING * 2 + DUAL_PLOT_HEIGHT * plot_rows * 2
 
     components.html(
         f"""
@@ -450,12 +452,18 @@ def render_dual_values_panel(
   <div class="dual-section">{n_html}</div>
   <div class="dual-plot-actions">
     <button class="dual-plot-button" id="dual-plot">Plot dual values</button>
+    <button class="dual-clear-button" id="dual-clear">Deselect all</button>
   </div>
-  <div id="dual-plot-gamma" class="dual-plot"></div>
-  <div id="dual-plot-n" class="dual-plot"></div>
+  <div class="dual-plot-section">
+    <div class="dual-plot-title">Dual values vs gamma</div>
+    <div id="dual-plot-gamma" class="dual-plot-grid"></div>
+  </div>
+  <div class="dual-plot-section">
+    <div class="dual-plot-title">Dual values vs n</div>
+    <div id="dual-plot-n" class="dual-plot-grid"></div>
+  </div>
   <div class="dual-selected-header">
     <div class="dual-selected-title">Selected dual values</div>
-    <button class="dual-clear-button" id="dual-clear">Deselect all</button>
   </div>
   <div id="dual-selected-list" class="dual-selected-list">None</div>
 </div>
@@ -496,7 +504,30 @@ def render_dual_values_panel(
   .dual-plot-button:hover {{
     background: #2b2b2b;
   }}
-  .dual-plot {{
+  .dual-plot-section {{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 12px;
+  }}
+  .dual-plot-title {{
+    font-weight: 600;
+  }}
+  .dual-plot-grid {{
+    display: grid;
+    grid-template-columns: repeat({DUAL_PLOT_COLUMNS}, minmax(220px, 1fr));
+    gap: 12px;
+  }}
+  .dual-plot-card {{
+    border: 1px solid #e5e5e5;
+    border-radius: 10px;
+    padding: 8px;
+  }}
+  .dual-plot-card-title {{
+    font-weight: 600;
+    margin-bottom: 6px;
+  }}
+  .dual-plot-chart {{
     min-height: {DUAL_PLOT_HEIGHT}px;
   }}
   .dual-button {{
@@ -596,47 +627,72 @@ def render_dual_values_panel(
     document.head.appendChild(script);
   }}
 
+  function sanitizeId(value) {{
+    return value.replace(/[^a-zA-Z0-9_-]/g, '-');
+  }}
+
+  function clearPlots() {{
+    document.getElementById('dual-plot-gamma').innerHTML = '';
+    document.getElementById('dual-plot-n').innerHTML = '';
+  }}
+
   function plotSelected() {{
     const seriesIds = Array.from(selected.keys());
+    const gammaGrid = document.getElementById('dual-plot-gamma');
+    const nGrid = document.getElementById('dual-plot-n');
+    gammaGrid.innerHTML = '';
+    nGrid.innerHTML = '';
     if (!seriesIds.length) {{
-      const gammaEl = document.getElementById('dual-plot-gamma');
-      const nEl = document.getElementById('dual-plot-n');
-      gammaEl.textContent = 'Select dual values to plot.';
-      nEl.textContent = 'Select dual values to plot.';
+      gammaGrid.textContent = 'Select dual values to plot.';
+      nGrid.textContent = 'Select dual values to plot.';
       return;
     }}
-    const gammaTraces = [];
-    const nTraces = [];
     seriesIds.forEach((seriesId) => {{
       const series = seriesData[seriesId];
       if (!series) {{
         return;
       }}
-      gammaTraces.push({{
+      const safeId = sanitizeId(seriesId);
+      const gammaCard = document.createElement('div');
+      gammaCard.className = 'dual-plot-card';
+      gammaCard.innerHTML = `
+        <div class="dual-plot-card-title">${{series.label}}</div>
+        <div id="gamma-${{safeId}}" class="dual-plot-chart"></div>
+      `;
+      gammaGrid.appendChild(gammaCard);
+
+      const nCard = document.createElement('div');
+      nCard.className = 'dual-plot-card';
+      nCard.innerHTML = `
+        <div class="dual-plot-card-title">${{series.label}}</div>
+        <div id="n-${{safeId}}" class="dual-plot-chart"></div>
+      `;
+      nGrid.appendChild(nCard);
+
+      Plotly.newPlot(`gamma-${{safeId}}`, [{{
         x: series.gamma_values,
         y: series.gamma_dual,
         mode: 'lines+markers',
         name: series.label,
-      }});
-      nTraces.push({{
+      }}], {{
+        title: series.label,
+        xaxis: {{ title: 'gamma' }},
+        yaxis: {{ title: 'dual value' }},
+        margin: {{ t: 40, l: 40, r: 20, b: 40 }},
+      }}, {{ displayModeBar: false }});
+
+      Plotly.newPlot(`n-${{safeId}}`, [{{
         x: series.n_values,
         y: series.n_dual,
         mode: 'lines+markers',
         name: series.label,
-      }});
+      }}], {{
+        title: series.label,
+        xaxis: {{ title: 'n' }},
+        yaxis: {{ title: 'dual value' }},
+        margin: {{ t: 40, l: 40, r: 20, b: 40 }},
+      }}, {{ displayModeBar: false }});
     }});
-    Plotly.newPlot('dual-plot-gamma', gammaTraces, {{
-      title: 'Dual values vs gamma',
-      xaxis: {{ title: 'gamma' }},
-      yaxis: {{ title: 'dual value' }},
-      margin: {{ t: 40, l: 40, r: 20, b: 40 }},
-    }}, {{ displayModeBar: false }});
-    Plotly.newPlot('dual-plot-n', nTraces, {{
-      title: 'Dual values vs n',
-      xaxis: {{ title: 'n' }},
-      yaxis: {{ title: 'dual value' }},
-      margin: {{ t: 40, l: 40, r: 20, b: 40 }},
-    }}, {{ displayModeBar: false }});
   }}
 
   plotBtn.addEventListener('click', () => {{
@@ -649,6 +705,7 @@ def render_dual_values_panel(
       btn.classList.remove('is-clicked');
     }});
     updateList();
+    clearPlots();
   }});
 </script>
 """,

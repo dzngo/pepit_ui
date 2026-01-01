@@ -305,7 +305,11 @@ def format_dual_value(value: float | None) -> str:
     return f"{value:.6g}"
 
 
-def dual_fluctuations_by_slice(slice_duals: list[dict]) -> dict:
+def dual_fluctuations_by_slice(
+    slice_duals: list[dict],
+    *,
+    metric: str = "std",
+) -> dict:
     dual_values: dict = {}
     for point_duals in slice_duals:
         for constraint, values in point_duals.items():
@@ -320,11 +324,16 @@ def dual_fluctuations_by_slice(slice_duals: list[dict]) -> dict:
             arr = np.asarray(values, dtype=float)
             if arr.size == 0:
                 continue
-            rms = float(np.sqrt(np.mean(arr**2)))
-            if rms <= 0:
-                fluct_map[dual_key] = 0.0
+            if metric == "std":
+                fluct_map[dual_key] = float(np.std(arr))
+            elif metric == "normalized_std_rms":
+                rms = float(np.sqrt(np.mean(arr**2)))
+                if rms <= 0:
+                    fluct_map[dual_key] = 0.0
+                else:
+                    fluct_map[dual_key] = float(np.std(arr) / rms)
             else:
-                fluct_map[dual_key] = float(np.std(arr) / rms)
+                raise NotImplementedError
         if fluct_map:
             fluctuations[constraint] = fluct_map
     return fluctuations
