@@ -1,16 +1,19 @@
 # routing.py
-import hashlib
-import re
+import json
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 from algorithms_registry import HyperparameterSpec
 from utils import (
     BASE_GAMMA_SPEC,
     BASE_N_SPEC,
+    build_dual_series_data,
+    build_dual_section_html,
     clamp_value,
     clear_grid_cache_entry,
+    dual_fluctuations_by_slice,
     get_tau_grid,
     slider_for_param,
     value_index,
@@ -224,9 +227,9 @@ def render_other_params_editor(algo_key: str, spec, settings):
                 "n_spec": settings["n_spec"],
                 "other_params": dict(new_values),
             }
-            st.session_state["other_editor_open"] = False
-            st.session_state["ui_phase"] = "loading"
-            st.rerun()
+    st.session_state["other_editor_open"] = False
+    st.session_state["ui_phase"] = "loading"
+    st.rerun()
     if st.button("Cancel"):
         st.session_state["other_editor_open"] = False
         st.rerun()
@@ -250,7 +253,7 @@ def render_results_phase(algo_key: str, spec):
         st.session_state["ui_phase"] = "loading"
         st.rerun()
 
-    gamma_values, n_values, tau_grid, cached_warnings, duals_grid, dual_fluctuations = cached
+    gamma_values, n_values, tau_grid, cached_warnings, duals_grid = cached
     gamma_spec = settings["gamma_spec"]
     n_spec = settings["n_spec"]
 
@@ -376,113 +379,278 @@ def render_results_phase(algo_key: str, spec):
     render_dual_values_panel(
         algo_key,
         duals_grid,
-        dual_fluctuations,
+        gamma_values,
+        n_values,
         gamma_idx,
         n_idx,
     )
 
 
-def _jet_color(value: float) -> str:
-    value = max(0.0, min(1.0, float(value)))
-    r = max(0.0, min(1.0, 1.5 - abs(4 * value - 3)))
-    g = max(0.0, min(1.0, 1.5 - abs(4 * value - 2)))
-    b = max(0.0, min(1.0, 1.5 - abs(4 * value - 1)))
-    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
-
-
-def _css_escape(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace("'", "\\'")
-    return re.sub(r"[\r\n]+", " ", escaped)
-
-
-def _text_color_for_bg(hex_color: str) -> str:
-    hex_color = hex_color.lstrip("#")
-    if len(hex_color) != 6:
-        return "#0b0b0b"
-    r = int(hex_color[0:2], 16) / 255.0
-    g = int(hex_color[2:4], 16) / 255.0
-    b = int(hex_color[4:6], 16) / 255.0
-    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-    return "#f7f7f7" if luminance < 0.55 else "#0b0b0b"
-
-
-def _marker_class(value: str) -> str:
-    digest = hashlib.md5(value.encode("utf-8")).hexdigest()[:10]
-    return f"dual-marker-{digest}"
-
-
-def _dual_selection_state(algo_key: str) -> dict:
-    return st.session_state.setdefault(f"dual_selection_{algo_key}", {})
-
-
-def _toggle_dual_selection(algo_key: str, key: str) -> None:
-    selected = _dual_selection_state(algo_key)
-    selected[key] = not selected.get(key, False)
+DUAL_BUTTON_COLUMNS = 12
+DUAL_BUTTON_MIN_WIDTH = 80
+DUAL_BUTTON_ROW_HEIGHT = 52
+DUAL_SECTION_PADDING = 70
+DUAL_PLOT_HEIGHT = 320
 
 
 def render_dual_values_panel(
     algo_key: str,
     duals_grid: list[list[dict]],
-    dual_fluctuations: dict,
+    gamma_values: np.ndarray,
+    n_values: np.ndarray,
     gamma_idx: int,
     n_idx: int,
 ) -> None:
     st.subheader("Dual values")
-    if not dual_fluctuations:
+    if not duals_grid:
         st.caption("No dual values available for these settings.")
         return
 
-    selected = _dual_selection_state(algo_key)
     current_duals = duals_grid[gamma_idx][n_idx] if duals_grid else {}
-    selected_values = []
+    gamma_slice = [row[n_idx] for row in duals_grid]
+    n_slice = list(duals_grid[gamma_idx])
+    gamma_fluctuations = dual_fluctuations_by_slice(gamma_slice)
+    n_fluctuations = dual_fluctuations_by_slice(n_slice)
+    series_data = build_dual_series_data(
+        duals_grid,
+        gamma_values,
+        n_values,
+        gamma_idx,
+        n_idx,
+    )
+    series_json = json.dumps(series_data).replace("</", "<\\/")
 
-    for constraint, fluct_map in sorted(dual_fluctuations.items()):
-        if not fluct_map:
-            continue
-        st.markdown(f"**{constraint}**")
-        max_fluct = max(fluct_map.values()) if fluct_map else 0.0
-        max_fluct = max(max_fluct, 1e-12)
-        keys = sorted(fluct_map.keys(), key=lambda k: fluct_map[k], reverse=True)
-        cols = st.columns(4)
-        for idx, dual_key in enumerate(keys):
-            fluct = fluct_map[dual_key]
-            color = _jet_color(fluct / max_fluct)
-            text_color = _text_color_for_bg(color)
-            button_key = f"dual-btn-{algo_key}-{constraint}-{dual_key}"
-            marker = _marker_class(button_key)
-            selection_key = f"{constraint}::{dual_key}"
-            is_selected = selected.get(selection_key, False)
-            with cols[idx % 4].form(key=f"{button_key}-form"):
-                st.markdown(
-                    f"<div class='{_css_escape(marker)}'></div>",
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f"<style>"
-                    f"div[data-testid='stForm']:has(.{_css_escape(marker)}) button {{"
-                    f"background-color: {color} !important;"
-                    f"border-color: {color} !important;"
-                    f"color: {text_color} !important;"
-                    f"}}"
-                    f"div[data-testid='stForm']:has(.{_css_escape(marker)}) button:hover {{"
-                    f"filter: brightness(0.95);"
-                    f"}}"
-                    f"</style>",
-                    unsafe_allow_html=True,
-                )
-                submitted = st.form_submit_button(
-                    dual_key,
-                    type="primary" if is_selected else "secondary",
-                )
-            if submitted:
-                _toggle_dual_selection(algo_key, selection_key)
-            if is_selected:
-                value = current_duals.get(constraint, {}).get(dual_key)
-                selected_values.append((constraint, dual_key, value))
+    gamma_title = f"Fluctuation vs gamma (n = {n_values[n_idx]})"
+    n_title = f"Fluctuation vs n (gamma = {gamma_values[gamma_idx]})"
+    gamma_html, gamma_count = build_dual_section_html(
+        section_id=f"{algo_key}-gamma",
+        title=gamma_title,
+        dual_fluctuations=gamma_fluctuations,
+        current_duals=current_duals,
+        columns=DUAL_BUTTON_COLUMNS,
+        min_width=DUAL_BUTTON_MIN_WIDTH,
+    )
+    n_html, n_count = build_dual_section_html(
+        section_id=f"{algo_key}-n",
+        title=n_title,
+        dual_fluctuations=n_fluctuations,
+        current_duals=current_duals,
+        columns=DUAL_BUTTON_COLUMNS,
+        min_width=DUAL_BUTTON_MIN_WIDTH,
+    )
 
-    st.subheader("Selected dual values")
-    if not selected_values:
-        st.caption("Click a dual value button to list its current value.")
-        return
-    for constraint, dual_key, value in selected_values:
-        st.write(f"{constraint} | {dual_key} = {value}")
+    total_buttons = gamma_count + n_count
+    rows = (max(total_buttons, 1) + DUAL_BUTTON_COLUMNS - 1) // DUAL_BUTTON_COLUMNS
+    component_height = 140 + rows * DUAL_BUTTON_ROW_HEIGHT + DUAL_SECTION_PADDING * 2 + DUAL_PLOT_HEIGHT * 2
+
+    components.html(
+        f"""
+<div class="dual-wrapper">
+  <div class="dual-section">{gamma_html}</div>
+  <div class="dual-section">{n_html}</div>
+  <div class="dual-plot-actions">
+    <button class="dual-plot-button" id="dual-plot">Plot dual values</button>
+  </div>
+  <div id="dual-plot-gamma" class="dual-plot"></div>
+  <div id="dual-plot-n" class="dual-plot"></div>
+  <div class="dual-selected-header">
+    <div class="dual-selected-title">Selected dual values</div>
+    <button class="dual-clear-button" id="dual-clear">Deselect all</button>
+  </div>
+  <div id="dual-selected-list" class="dual-selected-list">None</div>
+</div>
+
+<style>
+  .dual-wrapper {{
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }}
+  .dual-section-title {{
+    font-weight: 600;
+    margin: 8px 0 10px 0;
+  }}
+  .dual-constraint-title {{
+    font-weight: 600;
+    margin: 6px 0 6px 0;
+  }}
+  .dual-grid {{
+    display: grid;
+    gap: 10px;
+    margin-bottom: 12px;
+  }}
+  .dual-plot-actions {{
+    display: flex;
+    justify-content: flex-start;
+    margin: 6px 0 4px 0;
+  }}
+  .dual-plot-button {{
+    border: 1px solid #111;
+    background: #111;
+    color: #fff;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+  }}
+  .dual-plot-button:hover {{
+    background: #2b2b2b;
+  }}
+  .dual-plot {{
+    min-height: {DUAL_PLOT_HEIGHT}px;
+  }}
+  .dual-button {{
+    border: none;
+    font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 8px;
+    min-width: {DUAL_BUTTON_MIN_WIDTH}px;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  }}
+  .dual-button.is-clicked {{
+    outline: 2px solid #111;
+    outline-offset: 2px;
+  }}
+  .dual-selected-header {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }}
+  .dual-selected-title {{
+    font-weight: 600;
+  }}
+  .dual-clear-button {{
+    border: 1px solid #111;
+    background: #fff;
+    color: #111;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+  }}
+  .dual-clear-button:hover {{
+    background: #f2f2f2;
+  }}
+  .dual-selected-list {{
+    font-family: monospace;
+  }}
+</style>
+
+<script>
+  const seriesData = {series_json};
+  const selected = new Map();
+  const listEl = document.getElementById('dual-selected-list');
+  const clearBtn = document.getElementById('dual-clear');
+  const plotBtn = document.getElementById('dual-plot');
+
+  function updateList() {{
+    if (!selected.size) {{
+      listEl.textContent = 'None';
+      return;
+    }}
+    const items = Array.from(selected.values());
+    listEl.textContent = items.join(', ');
+  }}
+
+  function setButtonsSelected(seriesId, isSelected) {{
+    const matcher = (btn) => btn.getAttribute('data-series-id') === seriesId;
+    document.querySelectorAll('.dual-button').forEach((btn) => {{
+      if (!matcher(btn)) {{
+        return;
+      }}
+      if (isSelected) {{
+        btn.classList.add('is-clicked');
+      }} else {{
+        btn.classList.remove('is-clicked');
+      }}
+    }});
+  }}
+
+  document.querySelectorAll('.dual-button').forEach((btn) => {{
+    btn.addEventListener('click', () => {{
+      const id = btn.getAttribute('data-id');
+      const seriesId = btn.getAttribute('data-series-id');
+      const label = btn.getAttribute('data-label');
+      const value = btn.getAttribute('data-value');
+      const display = `${{label}} = ${{value}}`;
+      if (selected.has(seriesId)) {{
+        selected.delete(seriesId);
+        setButtonsSelected(seriesId, false);
+      }} else {{
+        selected.set(seriesId, display);
+        setButtonsSelected(seriesId, true);
+      }}
+      updateList();
+    }});
+  }});
+
+  function ensurePlotly(callback) {{
+    if (window.Plotly) {{
+      callback();
+      return;
+    }}
+    const script = document.createElement('script');
+    script.src = 'https://cdn.plot.ly/plotly-2.32.0.min.js';
+    script.onload = callback;
+    document.head.appendChild(script);
+  }}
+
+  function plotSelected() {{
+    const seriesIds = Array.from(selected.keys());
+    if (!seriesIds.length) {{
+      const gammaEl = document.getElementById('dual-plot-gamma');
+      const nEl = document.getElementById('dual-plot-n');
+      gammaEl.textContent = 'Select dual values to plot.';
+      nEl.textContent = 'Select dual values to plot.';
+      return;
+    }}
+    const gammaTraces = [];
+    const nTraces = [];
+    seriesIds.forEach((seriesId) => {{
+      const series = seriesData[seriesId];
+      if (!series) {{
+        return;
+      }}
+      gammaTraces.push({{
+        x: series.gamma_values,
+        y: series.gamma_dual,
+        mode: 'lines+markers',
+        name: series.label,
+      }});
+      nTraces.push({{
+        x: series.n_values,
+        y: series.n_dual,
+        mode: 'lines+markers',
+        name: series.label,
+      }});
+    }});
+    Plotly.newPlot('dual-plot-gamma', gammaTraces, {{
+      title: 'Dual values vs gamma',
+      xaxis: {{ title: 'gamma' }},
+      yaxis: {{ title: 'dual value' }},
+      margin: {{ t: 40, l: 40, r: 20, b: 40 }},
+    }}, {{ displayModeBar: false }});
+    Plotly.newPlot('dual-plot-n', nTraces, {{
+      title: 'Dual values vs n',
+      xaxis: {{ title: 'n' }},
+      yaxis: {{ title: 'dual value' }},
+      margin: {{ t: 40, l: 40, r: 20, b: 40 }},
+    }}, {{ displayModeBar: false }});
+  }}
+
+  plotBtn.addEventListener('click', () => {{
+    ensurePlotly(plotSelected);
+  }});
+
+  clearBtn.addEventListener('click', () => {{
+    selected.clear();
+    document.querySelectorAll('.dual-button').forEach((btn) => {{
+      btn.classList.remove('is-clicked');
+    }});
+    updateList();
+  }});
+</script>
+""",
+        height=component_height,
+    )

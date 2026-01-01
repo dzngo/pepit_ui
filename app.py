@@ -14,6 +14,7 @@ from routing import (
 def main():
     init_session_state()
     st.title("Interactive tau explorer")
+    st.set_page_config(layout="wide")
 
     algorithm_key = st.selectbox(
         "Algorithm",

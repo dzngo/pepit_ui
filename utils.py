@@ -1,4 +1,5 @@
 # utils.py
+import html
 import pickle
 import time
 from pathlib import Path
@@ -91,9 +92,7 @@ def _load_point_cache() -> Dict[Tuple, Tuple[float, str | None, Dict[str, Dict[s
     return cached
 
 
-def _save_point_cache(
-    cache: Dict[Tuple, Tuple[float, str | None, Dict[str, Dict[str, float]]]]
-) -> None:
+def _save_point_cache(cache: Dict[Tuple, Tuple[float, str | None, Dict[str, Dict[str, float]]]]) -> None:
     tmp_path = POINT_CACHE_PATH.with_suffix(".tmp")
     try:
         with tmp_path.open("wb") as handle:
@@ -164,7 +163,7 @@ def get_tau_grid(
     key = make_cache_key(algo_key, gamma_spec, n_spec, other_params)
     if key in grid_cache:
         cached = grid_cache[key]
-        if isinstance(cached, tuple) and len(cached) == 6:
+        if isinstance(cached, tuple) and len(cached) == 5:
             return cached
         grid_cache.pop(key, None)
 
@@ -243,36 +242,12 @@ def get_tau_grid(
     if missing:
         _save_point_cache(point_cache)
 
-    dual_fluctuations: Dict[str, Dict[str, float]] = {}
-    dual_values: Dict[str, Dict[str, list[float]]] = {}
-    for row in duals_grid:
-        for point_duals in row:
-            for constraint, values in point_duals.items():
-                for dual_key, dual_value in values.items():
-                    if dual_value is None or not np.isfinite(dual_value):
-                        continue
-                    dual_values.setdefault(constraint, {}).setdefault(dual_key, []).append(float(dual_value))
-    for constraint, key_values in dual_values.items():
-        fluct_map: Dict[str, float] = {}
-        for dual_key, values in key_values.items():
-            arr = np.asarray(values, dtype=float)
-            if arr.size == 0:
-                continue
-            rms = float(np.sqrt(np.mean(arr**2)))
-            if rms <= 0:
-                fluct_map[dual_key] = 0.0
-            else:
-                fluct_map[dual_key] = float(np.std(arr) / rms)
-        if fluct_map:
-            dual_fluctuations[constraint] = fluct_map
-
     grid_cache[key] = (
         gamma_values,
         n_values,
         tau_grid,
         tuple(sorted(warnings)),
         duals_grid,
-        dual_fluctuations,
     )
     return grid_cache[key]
 
@@ -293,3 +268,175 @@ def base_spec(name: str) -> HyperparameterSpec:
 
 BASE_GAMMA_SPEC = base_spec("gamma")
 BASE_N_SPEC = base_spec("n")
+
+
+def _dual_series_id(constraint: str, dual_key: str) -> str:
+    return f"{constraint}||{dual_key}"
+
+
+def jet_color(value: float) -> str:
+    value = max(0.0, min(1.0, float(value)))
+    r = max(0.0, min(1.0, 1.5 - abs(4 * value - 3)))
+    g = max(0.0, min(1.0, 1.5 - abs(4 * value - 2)))
+    b = max(0.0, min(1.0, 1.5 - abs(4 * value - 1)))
+    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+
+def text_color_for_bg(hex_color: str) -> str:
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) != 6:
+        return "#0b0b0b"
+    r = int(hex_color[0:2], 16) / 255.0
+    g = int(hex_color[2:4], 16) / 255.0
+    b = int(hex_color[4:6], 16) / 255.0
+    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return "#f7f7f7" if luminance < 0.55 else "#0b0b0b"
+
+
+def html_escape(value: str) -> str:
+    return html.escape(str(value), quote=True)
+
+
+def format_dual_value(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    if isinstance(value, float) and not np.isfinite(value):
+        return "N/A"
+    return f"{value:.6g}"
+
+
+def dual_fluctuations_by_slice(slice_duals: list[dict]) -> dict:
+    dual_values: dict = {}
+    for point_duals in slice_duals:
+        for constraint, values in point_duals.items():
+            for dual_key, dual_value in values.items():
+                if dual_value is None or not np.isfinite(dual_value):
+                    continue
+                dual_values.setdefault(constraint, {}).setdefault(dual_key, []).append(float(dual_value))
+    fluctuations: dict = {}
+    for constraint, key_values in dual_values.items():
+        fluct_map: dict = {}
+        for dual_key, values in key_values.items():
+            arr = np.asarray(values, dtype=float)
+            if arr.size == 0:
+                continue
+            rms = float(np.sqrt(np.mean(arr**2)))
+            if rms <= 0:
+                fluct_map[dual_key] = 0.0
+            else:
+                fluct_map[dual_key] = float(np.std(arr) / rms)
+        if fluct_map:
+            fluctuations[constraint] = fluct_map
+    return fluctuations
+
+
+def build_dual_series_data(
+    duals_grid: list[list[dict]],
+    gamma_values: np.ndarray,
+    n_values: np.ndarray,
+    gamma_idx: int,
+    n_idx: int,
+) -> dict:
+    gamma_len = len(gamma_values)
+    n_len = len(n_values)
+    series_meta: dict[str, tuple[str, str]] = {}
+    gamma_keys: set[str] = set()
+    n_keys: set[str] = set()
+
+    for i in range(gamma_len):
+        point = duals_grid[i][n_idx]
+        for constraint, values in point.items():
+            for dual_key in values.keys():
+                key = _dual_series_id(constraint, dual_key)
+                series_meta[key] = (constraint, dual_key)
+                gamma_keys.add(key)
+
+    for j in range(n_len):
+        point = duals_grid[gamma_idx][j]
+        for constraint, values in point.items():
+            for dual_key in values.keys():
+                key = _dual_series_id(constraint, dual_key)
+                series_meta[key] = (constraint, dual_key)
+                n_keys.add(key)
+
+    all_keys = gamma_keys | n_keys
+    gamma_series = {key: [None] * gamma_len for key in all_keys}
+    n_series = {key: [None] * n_len for key in all_keys}
+
+    for i in range(gamma_len):
+        point = duals_grid[i][n_idx]
+        for constraint, values in point.items():
+            for dual_key, value in values.items():
+                key = _dual_series_id(constraint, dual_key)
+                if key not in gamma_series:
+                    continue
+                if value is None or not np.isfinite(value):
+                    continue
+                gamma_series[key][i] = float(value)
+
+    for j in range(n_len):
+        point = duals_grid[gamma_idx][j]
+        for constraint, values in point.items():
+            for dual_key, value in values.items():
+                key = _dual_series_id(constraint, dual_key)
+                if key not in n_series:
+                    continue
+                if value is None or not np.isfinite(value):
+                    continue
+                n_series[key][j] = float(value)
+
+    series_data = {}
+    gamma_list = [float(value) for value in gamma_values]
+    n_list = [float(value) for value in n_values]
+    for key in all_keys:
+        constraint, dual_key = series_meta.get(key, ("", ""))
+        series_data[key] = {
+            "label": f"{constraint} | {dual_key}",
+            "gamma_values": gamma_list,
+            "gamma_dual": gamma_series[key],
+            "n_values": n_list,
+            "n_dual": n_series[key],
+        }
+    return series_data
+
+
+def build_dual_section_html(
+    *,
+    section_id: str,
+    title: str,
+    dual_fluctuations: dict,
+    current_duals: dict,
+    columns: int,
+    min_width: int,
+) -> tuple[str, int]:
+    if not dual_fluctuations:
+        return f"<div class='dual-section-title'>{html_escape(title)}</div><div>No data.</div>", 0
+
+    section_html = [f"<div class='dual-section-title'>{html_escape(title)}</div>"]
+    total_buttons = 0
+    for constraint, fluct_map in sorted(dual_fluctuations.items()):
+        if not fluct_map:
+            continue
+        max_fluct = max(fluct_map.values()) if fluct_map else 0.0
+        max_fluct = max(max_fluct, 1e-12)
+        section_html.append(f"<div class='dual-constraint-title'>{html_escape(constraint)}</div>")
+        section_html.append(
+            f"<div class='dual-grid' style='grid-template-columns: repeat({columns}, minmax({min_width}px, 1fr));'>"
+        )
+        for dual_key, fluct in sorted(fluct_map.items(), key=lambda item: item[1], reverse=True):
+            color = jet_color(fluct / max_fluct)
+            text_color = text_color_for_bg(color)
+            value = current_duals.get(constraint, {}).get(dual_key)
+            label = f"{constraint} | {dual_key}"
+            data_id = f"{section_id}::{constraint}::{dual_key}"
+            series_id = _dual_series_id(constraint, dual_key)
+            section_html.append(
+                f"<button class='dual-button' data-id='{html_escape(data_id)}' "
+                f"data-series-id='{html_escape(series_id)}' "
+                f"data-label='{html_escape(label)}' data-value='{html_escape(format_dual_value(value))}' "
+                f"style='background:{html_escape(color)};color:{html_escape(text_color)}'>"
+                f"{html_escape(dual_key)}</button>"
+            )
+            total_buttons += 1
+        section_html.append("</div>")
+    return "".join(section_html), total_buttons
