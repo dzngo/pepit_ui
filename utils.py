@@ -442,6 +442,7 @@ def build_dual_section_html(
             section_html.append(
                 f"<button class='dual-button' data-id='{html_escape(data_id)}' "
                 f"data-series-id='{html_escape(series_id)}' "
+                f"data-fluct='{html_escape(fluct)}' "
                 f"data-label='{html_escape(label)}' data-value='{html_escape(format_dual_value(value))}' "
                 f"style='background:{html_escape(color)};color:{html_escape(text_color)}'>"
                 f"{html_escape(dual_key)}</button>"

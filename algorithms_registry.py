@@ -15,7 +15,7 @@ class AlgorithmEvaluationError(RuntimeError):
 
 def _dual_key_label(key) -> str:
     if isinstance(key, tuple):
-        return "|".join(str(part) for part in key)
+        return " | ".join(str(part) for part in key)
     return str(key)
 
 
