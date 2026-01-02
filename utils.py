@@ -399,12 +399,28 @@ def build_dual_series_data(
     n_list = [float(value) for value in n_values]
     for key in all_keys:
         constraint, dual_key = series_meta.get(key, ("", ""))
+        gamma_dual = gamma_series[key]
+        n_dual = n_series[key]
+        gamma_values_clean = [
+            value for value in gamma_dual if value is not None and np.isfinite(value)
+        ]
+        n_values_clean = [
+            value for value in n_dual if value is not None and np.isfinite(value)
+        ]
+        all_zero_gamma = bool(gamma_values_clean) and all(
+            abs(value) <= 1e-12 for value in gamma_values_clean
+        )
+        all_zero_n = bool(n_values_clean) and all(
+            abs(value) <= 1e-12 for value in n_values_clean
+        )
         series_data[key] = {
             "label": f"{constraint} | {dual_key}",
             "gamma_values": gamma_list,
-            "gamma_dual": gamma_series[key],
+            "gamma_dual": gamma_dual,
             "n_values": n_list,
-            "n_dual": n_series[key],
+            "n_dual": n_dual,
+            "all_zero_gamma": all_zero_gamma,
+            "all_zero_n": all_zero_n,
         }
     return series_data
 
@@ -412,6 +428,7 @@ def build_dual_series_data(
 def build_dual_section_html(
     *,
     section_id: str,
+    section_key: str,
     title: str,
     dual_fluctuations: dict,
     current_duals: dict,
@@ -442,6 +459,7 @@ def build_dual_section_html(
             section_html.append(
                 f"<button class='dual-button' data-id='{html_escape(data_id)}' "
                 f"data-series-id='{html_escape(series_id)}' "
+                f"data-section='{html_escape(section_key)}' "
                 f"data-fluct='{html_escape(fluct)}' "
                 f"data-label='{html_escape(label)}' data-value='{html_escape(format_dual_value(value))}' "
                 f"style='background:{html_escape(color)};color:{html_escape(text_color)}'>"

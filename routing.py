@@ -1,5 +1,6 @@
 # routing.py
 import json
+from pathlib import Path
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
@@ -390,6 +391,11 @@ DUAL_SECTION_PADDING = 70
 DUAL_PLOT_HEIGHT = 200
 DUAL_PLOT_COLUMNS = 5
 
+UI_DIR = Path(__file__).resolve().parent / "ui"
+DUAL_PANEL_HTML = (UI_DIR / "dual_panel.html").read_text()
+DUAL_PANEL_CSS = (UI_DIR / "dual_panel.css").read_text()
+DUAL_PANEL_JS = (UI_DIR / "dual_panel.js").read_text()
+
 
 def render_dual_values_panel(
     algo_key: str,
@@ -418,11 +424,12 @@ def render_dual_values_panel(
     )
     series_json = json.dumps(series_data).replace("</", "<\\/")
 
-    gamma_title = f"Fluctuation vs gamma (n = {n_values[n_idx]})"
-    n_title = f"Fluctuation vs n (gamma = {gamma_values[gamma_idx]})"
+    gamma_fluct_title = f"Fluctuation vs gamma (n = {n_values[n_idx]})"
+    n_fluct_title = f"Fluctuation vs n (gamma = {gamma_values[gamma_idx]})"
     gamma_html, gamma_count = build_dual_section_html(
         section_id=f"{algo_key}-gamma",
-        title=gamma_title,
+        section_key="gamma",
+        title=gamma_fluct_title,
         dual_fluctuations=gamma_fluctuations,
         current_duals=current_duals,
         columns=DUAL_BUTTON_COLUMNS,
@@ -430,367 +437,34 @@ def render_dual_values_panel(
     )
     n_html, n_count = build_dual_section_html(
         section_id=f"{algo_key}-n",
-        title=n_title,
+        section_key="n",
+        title=n_fluct_title,
         dual_fluctuations=n_fluctuations,
         current_duals=current_duals,
         columns=DUAL_BUTTON_COLUMNS,
         min_width=DUAL_BUTTON_MIN_WIDTH,
     )
-
+    gamma_plot_title = f"Dual value vs gamma (n = {n_values[n_idx]})"
+    n_plot_title = f"Dual value vs n (gamma = {gamma_values[gamma_idx]})"
     total_buttons = gamma_count + n_count
     rows = (max(total_buttons, 1) + DUAL_BUTTON_COLUMNS - 1) // DUAL_BUTTON_COLUMNS
     plot_rows = (max(total_buttons, 1) + DUAL_PLOT_COLUMNS - 1) // DUAL_PLOT_COLUMNS
     component_height = 140 + rows * DUAL_BUTTON_ROW_HEIGHT + DUAL_SECTION_PADDING * 2 + DUAL_PLOT_HEIGHT * plot_rows * 2
     plot_card_title_px = max(11, min(14, DUAL_PLOT_HEIGHT // 15))
 
-    components.html(
-        f"""
-<div class="dual-wrapper">
-  <div class="dual-plot-actions">
-    <button class="dual-toggle-button" id="dual-toggle-zero">Hide zero fluctuation</button>
-  </div>
-  <div class="dual-panel">
-    <div class="dual-section">{gamma_html}</div>
-  </div>
-  <div class="dual-panel">
-    <div class="dual-section">{n_html}</div>
-  </div>
-  <div class="dual-plot-actions">
-    <button class="dual-plot-button" id="dual-plot">Plot dual values</button>
-    <button class="dual-clear-button" id="dual-clear">Deselect all</button>
-  </div>
-  <div class="dual-panel">
-  <div class="dual-plot-section">
-    <div class="dual-plot-title">Dual values vs gamma (n = {n_values[n_idx]})</div>
-    <div id="dual-plot-gamma" class="dual-plot-grid"></div>
-  </div>
-  </div>
-  <div class="dual-panel">
-  <div class="dual-plot-section">
-    <div class="dual-plot-title">Dual values vs n (gamma = {gamma_values[gamma_idx]})</div>
-    <div id="dual-plot-n" class="dual-plot-grid"></div>
-  </div>
-  </div>
-  <div class="dual-selected-header">
-    <div class="dual-selected-title">Selected dual values</div>
-  </div>
-  <div id="dual-selected-list" class="dual-selected-list">None</div>
-</div>
+    css = DUAL_PANEL_CSS
+    css = css.replace("{{PLOT_COLUMNS}}", str(DUAL_PLOT_COLUMNS))
+    css = css.replace("{{PLOT_HEIGHT}}", str(DUAL_PLOT_HEIGHT))
+    css = css.replace("{{PLOT_CARD_TITLE_PX}}", str(plot_card_title_px))
+    css = css.replace("{{BUTTON_MIN_WIDTH}}", str(DUAL_BUTTON_MIN_WIDTH))
 
-<style>
-  :root {{
-    --st-font: "Source Sans Pro", "Source Sans 3", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
-      Arial, sans-serif;
-  }}
-  .dual-wrapper {{
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-    font-family: var(--st-font);
-    font-size: 1rem;
-    line-height: 1.4;
-    color: rgb(49, 51, 63);
-  }}
-  .dual-wrapper button {{
-    font-family: var(--st-font);
-  }}
-  .dual-panel {{
-    border: 1px solid rgba(49, 51, 63, 0.2);
-    border-radius: 12px;
-    padding: 14px 14px 10px 14px;
-    background: rgba(255, 255, 255, 0.6);
-  }}
-  .dual-section-title {{
-    font-weight: 600;
-    margin: 8px 0 10px 0;
-  }}
-  .dual-constraint-title {{
-    font-weight: 600;
-    margin: 6px 0 6px 0;
-  }}
-  .dual-grid {{
-    display: grid;
-    gap: 10px;
-    margin-bottom: 12px;
-  }}
-  .dual-plot-actions {{
-    display: flex;
-    justify-content: flex-start;
-    margin: 6px 0 4px 0;
-  }}
-  .dual-plot-button {{
-    border: 1px solid #111;
-    background: #111;
-    color: #fff;
-    font-weight: 600;
-    padding: 6px 12px;
-    border-radius: 999px;
-    cursor: pointer;
-  }}
-  .dual-plot-button:hover {{
-    background: #2b2b2b;
-  }}
-  .dual-toggle-button {{
-    border: 1px solid #111;
-    background: #fff;
-    color: #111;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 999px;
-    cursor: pointer;
-  }}
-  .dual-toggle-button:hover {{
-    background: #f2f2f2;
-  }}
-  .dual-toggle-button.is-active {{
-    background: #111;
-    color: #fff;
-  }}
-  .dual-button.is-hidden {{
-    display: none;
-  }}
-  .dual-plot-section {{
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-bottom: 12px;
-  }}
-  .dual-plot-title {{
-    font-weight: 600;
-  }}
-  .dual-plot-grid {{
-    display: grid;
-    grid-template-columns: repeat({DUAL_PLOT_COLUMNS}, minmax(220px, 1fr));
-    gap: 12px;
-  }}
-  .dual-plot-card {{
-    border: 1px solid #e5e5e5;
-    border-radius: 10px;
-    padding: 8px;
-  }}
-  .dual-plot-card-title {{
-    font-weight: 600;
-    margin-bottom: 6px;
-    font-size: {plot_card_title_px}px;
-  }}
-  .dual-plot-chart {{
-    min-height: {DUAL_PLOT_HEIGHT}px;
-  }}
-  .dual-button {{
-    border: none;
-    font-weight: 300;
-    padding: 8px 12px;
-    border-radius: 8px;
-    min-width: {DUAL_BUTTON_MIN_WIDTH}px;
-    cursor: pointer;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
-  }}
-  .dual-button.is-clicked {{
-    outline: 2px solid #111;
-    outline-offset: 2px;
-  }}
-  .dual-selected-header {{
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }}
-  .dual-selected-title {{
-    font-weight: 600;
-  }}
-  .dual-clear-button {{
-    border: 1px solid #111;
-    background: #fff;
-    color: #111;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 999px;
-    cursor: pointer;
-  }}
-  .dual-clear-button:hover {{
-    background: #f2f2f2;
-  }}
-  .dual-selected-list {{
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    font-family: var(--st-font);
-  }}
-  .dual-badge {{
-    border: 1px solid rgba(49, 51, 63, 0.25);
-    background: rgba(49, 51, 63, 0.06);
-    padding: 6px 10px;
-    border-radius: 999px;
-    font-size: 12px;
-    white-space: nowrap;
-  }}
-</style>
+    html = DUAL_PANEL_HTML
+    html = html.replace("{{CSS}}", css)
+    html = html.replace("{{JS}}", DUAL_PANEL_JS)
+    html = html.replace("{{SERIES_JSON}}", series_json)
+    html = html.replace("{{GAMMA_HTML}}", gamma_html)
+    html = html.replace("{{N_HTML}}", n_html)
+    html = html.replace("{{PLOT_TITLE_GAMMA}}", gamma_plot_title)
+    html = html.replace("{{PLOT_TITLE_N}}", n_plot_title)
 
-<script>
-  const seriesData = {series_json};
-  const selected = new Map();
-  const listEl = document.getElementById('dual-selected-list');
-  const clearBtn = document.getElementById('dual-clear');
-  const plotBtn = document.getElementById('dual-plot');
-  const toggleBtn = document.getElementById('dual-toggle-zero');
-  let hideZero = false;
-
-  function escapeHtml(value) {{
-    return String(value).replace(/[&<>"']/g, (c) => {{
-      return {{ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }}[c];
-    }});
-  }}
-
-  function updateList() {{
-    if (!selected.size) {{
-      listEl.textContent = 'None';
-      return;
-    }}
-    const items = Array.from(selected.values());
-    listEl.innerHTML = items.map((txt) => `<span class="dual-badge">${{escapeHtml(txt)}}</span>`).join('');
-  }}
-
-  function setButtonsSelected(seriesId, isSelected) {{
-    const matcher = (btn) => btn.getAttribute('data-series-id') === seriesId;
-    document.querySelectorAll('.dual-button').forEach((btn) => {{
-      if (!matcher(btn)) {{
-        return;
-      }}
-      if (isSelected) {{
-        btn.classList.add('is-clicked');
-      }} else {{
-        btn.classList.remove('is-clicked');
-      }}
-    }});
-  }}
-
-  document.querySelectorAll('.dual-button').forEach((btn) => {{
-    btn.addEventListener('click', () => {{
-      const id = btn.getAttribute('data-id');
-      const seriesId = btn.getAttribute('data-series-id');
-      const label = btn.getAttribute('data-label');
-      const value = btn.getAttribute('data-value');
-      const display = `${{label}}`;
-      if (selected.has(seriesId)) {{
-        selected.delete(seriesId);
-        setButtonsSelected(seriesId, false);
-      }} else {{
-        selected.set(seriesId, display);
-        setButtonsSelected(seriesId, true);
-      }}
-      updateList();
-    }});
-  }});
-
-  function applyZeroFilter() {{
-    document.querySelectorAll('.dual-button').forEach((btn) => {{
-      const fluct = parseFloat(btn.getAttribute('data-fluct') || '0');
-      if (hideZero && fluct === 0) {{
-        btn.classList.add('is-hidden');
-      }} else {{
-        btn.classList.remove('is-hidden');
-      }}
-    }});
-  }}
-
-  toggleBtn.addEventListener('click', () => {{
-    hideZero = !hideZero;
-    toggleBtn.classList.toggle('is-active', hideZero);
-    toggleBtn.textContent = hideZero ? 'Show zero fluctuation' : 'Hide zero fluctuation';
-    applyZeroFilter();
-  }});
-
-  function ensurePlotly(callback) {{
-    if (window.Plotly) {{
-      callback();
-      return;
-    }}
-    const script = document.createElement('script');
-    script.src = 'https://cdn.plot.ly/plotly-2.32.0.min.js';
-    script.onload = callback;
-    document.head.appendChild(script);
-  }}
-
-  function sanitizeId(value) {{
-    return value.replace(/[^a-zA-Z0-9_-]/g, '-');
-  }}
-
-  function clearPlots() {{
-    document.getElementById('dual-plot-gamma').innerHTML = '';
-    document.getElementById('dual-plot-n').innerHTML = '';
-  }}
-
-  function plotSelected() {{
-    const seriesIds = Array.from(selected.keys());
-    const gammaGrid = document.getElementById('dual-plot-gamma');
-    const nGrid = document.getElementById('dual-plot-n');
-    gammaGrid.innerHTML = '';
-    nGrid.innerHTML = '';
-    if (!seriesIds.length) {{
-      gammaGrid.textContent = 'Select dual values to plot.';
-      nGrid.textContent = 'Select dual values to plot.';
-      return;
-    }}
-    seriesIds.forEach((seriesId) => {{
-      const series = seriesData[seriesId];
-      if (!series) {{
-        return;
-      }}
-      const safeId = sanitizeId(seriesId);
-      const gammaCard = document.createElement('div');
-      gammaCard.className = 'dual-plot-card';
-      gammaCard.innerHTML = `
-        <div class="dual-plot-card-title">${{series.label}}</div>
-        <div id="gamma-${{safeId}}" class="dual-plot-chart"></div>
-      `;
-      gammaGrid.appendChild(gammaCard);
-
-      const nCard = document.createElement('div');
-      nCard.className = 'dual-plot-card';
-      nCard.innerHTML = `
-        <div class="dual-plot-card-title">${{series.label}}</div>
-        <div id="n-${{safeId}}" class="dual-plot-chart"></div>
-      `;
-      nGrid.appendChild(nCard);
-
-      Plotly.newPlot(`gamma-${{safeId}}`, [{{
-        x: series.gamma_values,
-        y: series.gamma_dual,
-        mode: 'lines',
-        name: series.label,
-      }}], {{
-        xaxis: {{ title: '', tickfont: {{ size: 9 }} }},
-        yaxis: {{ title: '', tickfont: {{ size: 9 }} }},
-        margin: {{ t: 10, l: 30, r: 10, b: 26 }},
-      }}, {{ displayModeBar: false }});
-
-      Plotly.newPlot(`n-${{safeId}}`, [{{
-        x: series.n_values,
-        y: series.n_dual,
-        mode: 'lines',
-        name: series.label,
-      }}], {{
-        xaxis: {{ title: '', tickfont: {{ size: 9 }} }},
-        yaxis: {{ title: '', tickfont: {{ size: 9 }} }},
-        margin: {{ t: 10, l: 30, r: 10, b: 26 }},
-      }}, {{ displayModeBar: false }});
-    }});
-  }}
-
-  plotBtn.addEventListener('click', () => {{
-    ensurePlotly(plotSelected);
-  }});
-
-  clearBtn.addEventListener('click', () => {{
-    selected.clear();
-    document.querySelectorAll('.dual-button').forEach((btn) => {{
-      btn.classList.remove('is-clicked');
-    }});
-    updateList();
-    clearPlots();
-  }});
-
-  applyZeroFilter();
-</script>
-""",
-        height=component_height,
-    )
+    components.html(html, height=component_height)
