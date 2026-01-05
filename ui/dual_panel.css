@@ -97,11 +97,10 @@
 }
 .dual-plot-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(var(--dual-plot-min-width), max-content));
-  column-gap: 16px;
-  row-gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--dual-plot-min-width), 1fr));
+  gap: 5px;
   align-items: start;
-  justify-content: start;
+  justify-items: start;
 }
 .dual-plot-constraint {
   display: flex;
@@ -118,6 +117,7 @@
   overflow: hidden;
   width: 100%;
   max-width: 360px;
+  box-sizing: border-box;
 }
 .dual-plot-card-title {
   font-weight: 600;
