@@ -192,27 +192,29 @@ function plotSelected() {
 
       const gammaCount = series.gamma_dual.filter((value) => value !== null && Number.isFinite(value)).length;
       Plotly.newPlot(`gamma-${safeId}`, [{
-        x: series.gamma_values,
-        y: series.gamma_dual,
-        mode: gammaCount <= 1 ? 'markers' : 'lines',
-        name: series.label,
-      }], {
-        xaxis: { title: '', tickfont: { size: 9 } },
-        yaxis: { title: '', tickfont: { size: 9 } },
-        margin: { t: 10, l: 30, r: 10, b: 15 },
-      }, { displayModeBar: false });
+      x: series.gamma_values,
+      y: series.gamma_dual,
+      mode: gammaCount <= 1 ? 'markers' : 'lines',
+      name: series.label,
+    }], {
+      autosize: true,
+      xaxis: { title: '', tickfont: { size: 9 } },
+      yaxis: { title: '', tickfont: { size: 9 } },
+      margin: { t: 10, l: 30, r: 10, b: 15 },
+    }, { displayModeBar: false, responsive: true });
 
       const nCount = series.n_dual.filter((value) => value !== null && Number.isFinite(value)).length;
       Plotly.newPlot(`n-${safeId}`, [{
-        x: series.n_values,
-        y: series.n_dual,
-        mode: nCount <= 1 ? 'markers' : 'lines',
-        name: series.label,
-      }], {
-        xaxis: { title: '', tickfont: { size: 9 } },
-        yaxis: { title: '', tickfont: { size: 9 } },
-        margin: { t: 10, l: 30, r: 10, b: 15 },
-      }, { displayModeBar: false });
+      x: series.n_values,
+      y: series.n_dual,
+      mode: nCount <= 1 ? 'markers' : 'lines',
+      name: series.label,
+    }], {
+      autosize: true,
+      xaxis: { title: '', tickfont: { size: 9 } },
+      yaxis: { title: '', tickfont: { size: 9 } },
+      margin: { t: 10, l: 30, r: 10, b: 15 },
+    }, { displayModeBar: false, responsive: true });
     });
   });
 }

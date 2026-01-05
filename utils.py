@@ -434,7 +434,6 @@ def build_dual_section_html(
     title: str,
     dual_fluctuations: dict,
     current_duals: dict,
-    columns: int,
     min_width: int,
 ) -> tuple[str, int]:
     if not dual_fluctuations:
@@ -448,9 +447,7 @@ def build_dual_section_html(
         max_fluct = max(fluct_map.values()) if fluct_map else 0.0
         max_fluct = max(max_fluct, 1e-12)
         section_html.append(f"<div class='dual-constraint-title'>{html_escape(constraint)}</div>")
-        section_html.append(
-            f"<div class='dual-grid' style='grid-template-columns: repeat({columns}, minmax({min_width}px, 1fr));'>"
-        )
+        section_html.append("<div class='dual-grid'>")
         for dual_key, fluct in sorted(fluct_map.items(), key=lambda item: item[1], reverse=True):
             color = jet_color(fluct / max_fluct)
             text_color = text_color_for_bg(color)

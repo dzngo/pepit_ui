@@ -384,12 +384,13 @@ def render_results_phase(algo_key: str, spec):
     )
 
 
-DUAL_BUTTON_COLUMNS = 12
-DUAL_BUTTON_MIN_WIDTH = 80
+DUAL_BUTTON_MIN_WIDTH = 140
+DUAL_BUTTON_MAX_WIDTH = 220
 DUAL_BUTTON_ROW_HEIGHT = 52
 DUAL_SECTION_PADDING = 70
 DUAL_PLOT_HEIGHT = 100
 DUAL_PLOT_COLUMNS = 7
+DUAL_PLOT_MIN_WIDTH = 220
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
 DUAL_PANEL_HTML = (UI_DIR / "dual_panel.html").read_text()
@@ -432,7 +433,6 @@ def render_dual_values_panel(
         title=gamma_fluct_title,
         dual_fluctuations=gamma_fluctuations,
         current_duals=current_duals,
-        columns=DUAL_BUTTON_COLUMNS,
         min_width=DUAL_BUTTON_MIN_WIDTH,
     )
     n_html, n_count = build_dual_section_html(
@@ -441,23 +441,22 @@ def render_dual_values_panel(
         title=n_fluct_title,
         dual_fluctuations=n_fluctuations,
         current_duals=current_duals,
-        columns=DUAL_BUTTON_COLUMNS,
         min_width=DUAL_BUTTON_MIN_WIDTH,
     )
     gamma_plot_title = f"Dual value vs gamma (n = {n_values[n_idx]})"
     n_plot_title = f"Dual value vs n (gamma = {gamma_values[gamma_idx]})"
     total_buttons = gamma_count + n_count
-    rows = (max(total_buttons, 1) + DUAL_BUTTON_COLUMNS - 1) // DUAL_BUTTON_COLUMNS
     plot_rows = (max(total_buttons, 1) + DUAL_PLOT_COLUMNS - 1) // DUAL_PLOT_COLUMNS
-    component_height = 140 + rows * DUAL_BUTTON_ROW_HEIGHT + DUAL_SECTION_PADDING * 2 + DUAL_PLOT_HEIGHT * plot_rows * 2
+    component_height = 140 + DUAL_SECTION_PADDING * 2 + DUAL_PLOT_HEIGHT * plot_rows * 2
     component_height = max(component_height, 700)
     plot_card_title_px = max(11, min(14, DUAL_PLOT_HEIGHT // 15))
 
     css = DUAL_PANEL_CSS
-    css = css.replace("{{PLOT_COLUMNS}}", str(DUAL_PLOT_COLUMNS))
+    css = css.replace("{{PLOT_MIN_WIDTH}}", str(DUAL_PLOT_MIN_WIDTH))
     css = css.replace("{{PLOT_HEIGHT}}", str(DUAL_PLOT_HEIGHT))
     css = css.replace("{{PLOT_CARD_TITLE_PX}}", str(plot_card_title_px))
     css = css.replace("{{BUTTON_MIN_WIDTH}}", str(DUAL_BUTTON_MIN_WIDTH))
+    css = css.replace("{{BUTTON_MAX_WIDTH}}", str(DUAL_BUTTON_MAX_WIDTH))
 
     html = DUAL_PANEL_HTML
     html = html.replace("{{CSS}}", css)
