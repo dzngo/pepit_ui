@@ -64,11 +64,17 @@ function applyZeroFilter() {
       btn.classList.remove('is-all-zero');
     }
     if (hideZero && isAllZero) {
+      if (selected.has(seriesId)) {
+        selected.delete(seriesId);
+        setButtonsSelected(seriesId, false);
+      }
       btn.classList.add('is-hidden');
     } else {
       btn.classList.remove('is-hidden');
     }
   });
+  updateList();
+  updateClearButton();
 }
 
 document.querySelectorAll('.dual-button').forEach((btn) => {

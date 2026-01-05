@@ -450,6 +450,7 @@ def render_dual_values_panel(
     rows = (max(total_buttons, 1) + DUAL_BUTTON_COLUMNS - 1) // DUAL_BUTTON_COLUMNS
     plot_rows = (max(total_buttons, 1) + DUAL_PLOT_COLUMNS - 1) // DUAL_PLOT_COLUMNS
     component_height = 140 + rows * DUAL_BUTTON_ROW_HEIGHT + DUAL_SECTION_PADDING * 2 + DUAL_PLOT_HEIGHT * plot_rows * 2
+    component_height = max(component_height, 700)
     plot_card_title_px = max(11, min(14, DUAL_PLOT_HEIGHT // 15))
 
     css = DUAL_PANEL_CSS
@@ -467,4 +468,4 @@ def render_dual_values_panel(
     html = html.replace("{{PLOT_TITLE_GAMMA}}", gamma_plot_title)
     html = html.replace("{{PLOT_TITLE_N}}", n_plot_title)
 
-    components.html(html, height=component_height)
+    components.html(html, height=component_height, scrolling=True)
