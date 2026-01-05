@@ -40,8 +40,8 @@
   margin: 6px 0 4px 0;
 }
 .dual-plot-button {
-  border: 1px solid #111;
-  background: #111;
+  border: 1px solid #ff4d00;
+  background: #ff4d00;
   color: #fff;
   font-weight: 600;
   padding: 6px 12px;
@@ -49,7 +49,8 @@
   cursor: pointer;
 }
 .dual-plot-button:hover {
-  background: #2b2b2b;
+  border: 1px solid #ff4d0078;
+  background: #ff4d0078;
 }
 .dual-toggle-button {
   border: 1px solid #111;
@@ -84,10 +85,23 @@
 .dual-plot-title {
   font-weight: 600;
 }
-.dual-plot-grid {
+.dual-plot-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.dual-plot-cards {
   display: grid;
   grid-template-columns: repeat({{PLOT_COLUMNS}}, minmax(220px, 1fr));
   gap: 12px;
+}
+.dual-plot-constraint {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dual-plot-constraint-title {
+  font-weight: 600;
 }
 .dual-plot-card {
   border: 1px solid #e5e5e5;

@@ -3,7 +3,7 @@ const listEl = document.getElementById('dual-selected-list');
 const clearBtn = document.getElementById('dual-clear');
 const plotBtn = document.getElementById('dual-plot');
 const toggleBtn = document.getElementById('dual-toggle-zero');
-let hideZero = false;
+let hideZero = true;
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (c) => {
@@ -18,6 +18,21 @@ function updateList() {
   }
   const items = Array.from(selected.values());
   listEl.innerHTML = items.map((txt) => `<span class="dual-badge">${escapeHtml(txt)}</span>`).join('');
+}
+
+function visibleButtons() {
+  return Array.from(document.querySelectorAll('.dual-button:not(.is-hidden)'));
+}
+
+function updateClearButton() {
+  const buttons = visibleButtons();
+  if (!buttons.length) {
+    clearBtn.textContent = 'Select all';
+    return;
+  }
+  const visibleSeries = new Set(buttons.map((btn) => btn.getAttribute('data-series-id')));
+  const allSelected = Array.from(visibleSeries).every((id) => selected.has(id));
+  clearBtn.textContent = allSelected ? 'Deselect all' : 'Select all';
 }
 
 function setButtonsSelected(seriesId, isSelected) {
@@ -70,6 +85,7 @@ document.querySelectorAll('.dual-button').forEach((btn) => {
       setButtonsSelected(seriesId, true);
     }
     updateList();
+    updateClearButton();
   });
 });
 
@@ -78,6 +94,7 @@ toggleBtn.addEventListener('click', () => {
   toggleBtn.classList.toggle('is-active', hideZero);
   toggleBtn.textContent = hideZero ? 'Show all-zero duals' : 'Hide all-zero duals';
   applyZeroFilter();
+  updateClearButton();
 });
 
 function ensurePlotly(callback) {
@@ -111,49 +128,86 @@ function plotSelected() {
     nGrid.textContent = 'Select dual values to plot.';
     return;
   }
+  const grouped = new Map();
   seriesIds.forEach((seriesId) => {
     const series = seriesData[seriesId];
     if (!series) {
       return;
     }
-    const safeId = sanitizeId(seriesId);
-    const gammaCard = document.createElement('div');
-    gammaCard.className = 'dual-plot-card';
-    gammaCard.innerHTML = `
-      <div class="dual-plot-card-title">${series.label}</div>
-      <div id="gamma-${safeId}" class="dual-plot-chart"></div>
+    const constraint = series.constraint || 'Other';
+    if (!grouped.has(constraint)) {
+      grouped.set(constraint, []);
+    }
+    grouped.get(constraint).push(seriesId);
+  });
+
+  grouped.forEach((ids, constraint) => {
+    const gammaSection = document.createElement('div');
+    gammaSection.className = 'dual-plot-constraint';
+    const constraintLabel = escapeHtml(constraint);
+    gammaSection.innerHTML = `
+      <div class="dual-plot-constraint-title">${constraintLabel}</div>
+      <div class="dual-plot-cards" data-constraint="${constraintLabel}"></div>
     `;
-    gammaGrid.appendChild(gammaCard);
+    gammaGrid.appendChild(gammaSection);
 
-    const nCard = document.createElement('div');
-    nCard.className = 'dual-plot-card';
-    nCard.innerHTML = `
-      <div class="dual-plot-card-title">${series.label}</div>
-      <div id="n-${safeId}" class="dual-plot-chart"></div>
+    const nSection = document.createElement('div');
+    nSection.className = 'dual-plot-constraint';
+    nSection.innerHTML = `
+      <div class="dual-plot-constraint-title">${constraintLabel}</div>
+      <div class="dual-plot-cards" data-constraint="${constraintLabel}"></div>
     `;
-    nGrid.appendChild(nCard);
+    nGrid.appendChild(nSection);
 
-    Plotly.newPlot(`gamma-${safeId}`, [{
-      x: series.gamma_values,
-      y: series.gamma_dual,
-      mode: 'lines',
-      name: series.label,
-    }], {
-      xaxis: { title: '', tickfont: { size: 9 } },
-      yaxis: { title: '', tickfont: { size: 9 } },
-      margin: { t: 10, l: 30, r: 10, b: 26 },
-    }, { displayModeBar: false });
+    const gammaConstraintGrid = gammaSection.querySelector('.dual-plot-cards');
+    const nConstraintGrid = nSection.querySelector('.dual-plot-cards');
 
-    Plotly.newPlot(`n-${safeId}`, [{
-      x: series.n_values,
-      y: series.n_dual,
-      mode: 'lines',
-      name: series.label,
-    }], {
-      xaxis: { title: '', tickfont: { size: 9 } },
-      yaxis: { title: '', tickfont: { size: 9 } },
-      margin: { t: 10, l: 30, r: 10, b: 26 },
-    }, { displayModeBar: false });
+    ids.forEach((seriesId) => {
+      const series = seriesData[seriesId];
+      if (!series) {
+        return;
+      }
+      const safeId = sanitizeId(seriesId);
+      const gammaCard = document.createElement('div');
+      gammaCard.className = 'dual-plot-card';
+      gammaCard.innerHTML = `
+        <div class="dual-plot-card-title">${escapeHtml(series.label)}</div>
+        <div id="gamma-${safeId}" class="dual-plot-chart"></div>
+      `;
+      gammaConstraintGrid.appendChild(gammaCard);
+
+      const nCard = document.createElement('div');
+      nCard.className = 'dual-plot-card';
+      nCard.innerHTML = `
+        <div class="dual-plot-card-title">${escapeHtml(series.label)}</div>
+        <div id="n-${safeId}" class="dual-plot-chart"></div>
+      `;
+      nConstraintGrid.appendChild(nCard);
+
+      const gammaCount = series.gamma_dual.filter((value) => value !== null && Number.isFinite(value)).length;
+      Plotly.newPlot(`gamma-${safeId}`, [{
+        x: series.gamma_values,
+        y: series.gamma_dual,
+        mode: gammaCount <= 1 ? 'markers' : 'lines',
+        name: series.label,
+      }], {
+        xaxis: { title: '', tickfont: { size: 9 } },
+        yaxis: { title: '', tickfont: { size: 9 } },
+        margin: { t: 10, l: 30, r: 10, b: 15 },
+      }, { displayModeBar: false });
+
+      const nCount = series.n_dual.filter((value) => value !== null && Number.isFinite(value)).length;
+      Plotly.newPlot(`n-${safeId}`, [{
+        x: series.n_values,
+        y: series.n_dual,
+        mode: nCount <= 1 ? 'markers' : 'lines',
+        name: series.label,
+      }], {
+        xaxis: { title: '', tickfont: { size: 9 } },
+        yaxis: { title: '', tickfont: { size: 9 } },
+        margin: { t: 10, l: 30, r: 10, b: 15 },
+      }, { displayModeBar: false });
+    });
   });
 }
 
@@ -162,12 +216,36 @@ plotBtn.addEventListener('click', () => {
 });
 
 clearBtn.addEventListener('click', () => {
-  selected.clear();
-  document.querySelectorAll('.dual-button').forEach((btn) => {
-    btn.classList.remove('is-clicked');
-  });
+  const buttons = visibleButtons();
+  if (!buttons.length) {
+    return;
+  }
+  const visibleSeries = new Set(buttons.map((btn) => btn.getAttribute('data-series-id')));
+  const allSelected = Array.from(visibleSeries).every((id) => selected.has(id));
+  if (allSelected) {
+    visibleSeries.forEach((id) => selected.delete(id));
+    document.querySelectorAll('.dual-button').forEach((btn) => {
+      const id = btn.getAttribute('data-series-id');
+      if (visibleSeries.has(id)) {
+        btn.classList.remove('is-clicked');
+      }
+    });
+  } else {
+    buttons.forEach((btn) => {
+      const seriesId = btn.getAttribute('data-series-id');
+      const label = btn.getAttribute('data-label');
+      if (!selected.has(seriesId)) {
+        selected.set(seriesId, label);
+      }
+    });
+    visibleSeries.forEach((id) => setButtonsSelected(id, true));
+  }
   updateList();
+  updateClearButton();
   clearPlots();
 });
 
+toggleBtn.classList.toggle('is-active', hideZero);
+toggleBtn.textContent = hideZero ? 'Show all-zero duals' : 'Hide all-zero duals';
 applyZeroFilter();
+updateClearButton();

@@ -1,6 +1,6 @@
 <div class="dual-wrapper">
   <div class="dual-plot-actions">
-    <button class="dual-toggle-button" id="dual-toggle-zero">Hide all-zero duals</button>
+    <button class="dual-toggle-button is-active" id="dual-toggle-zero">Show all-zero duals</button>
   </div>
   <div class="dual-panel">
     <div class="dual-section">{{GAMMA_HTML}}</div>
@@ -10,18 +10,18 @@
   </div>
   <div class="dual-plot-actions">
     <button class="dual-plot-button" id="dual-plot">Plot dual values</button>
-    <button class="dual-clear-button" id="dual-clear">Deselect all</button>
+    <button class="dual-clear-button" id="dual-clear">Select all</button>
   </div>
   <div class="dual-panel">
     <div class="dual-plot-section">
       <div class="dual-plot-title">{{PLOT_TITLE_GAMMA}}</div>
-      <div id="dual-plot-gamma" class="dual-plot-grid"></div>
+      <div id="dual-plot-gamma" class="dual-plot-sections"></div>
     </div>
   </div>
   <div class="dual-panel">
     <div class="dual-plot-section">
       <div class="dual-plot-title">{{PLOT_TITLE_N}}</div>
-      <div id="dual-plot-n" class="dual-plot-grid"></div>
+      <div id="dual-plot-n" class="dual-plot-sections"></div>
     </div>
   </div>
   <div class="dual-selected-header">

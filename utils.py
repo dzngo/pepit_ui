@@ -414,6 +414,8 @@ def build_dual_series_data(
             abs(value) <= 1e-12 for value in n_values_clean
         )
         series_data[key] = {
+            "constraint": constraint,
+            "dual_key": dual_key,
             "label": f"{constraint} | {dual_key}",
             "gamma_values": gamma_list,
             "gamma_dual": gamma_dual,
