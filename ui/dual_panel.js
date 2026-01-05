@@ -3,7 +3,10 @@ const listEl = document.getElementById('dual-selected-list');
 const clearBtn = document.getElementById('dual-clear');
 const plotBtn = document.getElementById('dual-plot');
 const toggleBtn = document.getElementById('dual-toggle-zero');
+const removeGammaBtn = document.getElementById('dual-remove-gamma');
+const removeNBtn = document.getElementById('dual-remove-n');
 let hideZero = true;
+const selectedPlotCards = { gamma: new Set(), n: new Set() };
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (c) => {
@@ -35,6 +38,40 @@ function updateClearButton() {
   clearBtn.textContent = allSelected ? 'Deselect all' : 'Select all';
 }
 
+function updateRemoveButtons() {
+  removeGammaBtn.style.display = selectedPlotCards.gamma.size ? 'inline-flex' : 'none';
+  removeNBtn.style.display = selectedPlotCards.n.size ? 'inline-flex' : 'none';
+}
+
+function togglePlotCardSelection(card, set) {
+  const seriesId = card.getAttribute('data-series-id');
+  if (!seriesId) {
+    return;
+  }
+  if (set.has(seriesId)) {
+    set.delete(seriesId);
+    card.classList.remove('is-selected');
+  } else {
+    set.add(seriesId);
+    card.classList.add('is-selected');
+  }
+  updateRemoveButtons();
+}
+
+function removeSelectedSeries(set) {
+  set.forEach((seriesId) => {
+    if (selected.has(seriesId)) {
+      selected.delete(seriesId);
+      setButtonsSelected(seriesId, false);
+    }
+  });
+  set.clear();
+  updateList();
+  updateClearButton();
+  clearPlots();
+  plotSelected();
+  updateRemoveButtons();
+}
 function setButtonsSelected(seriesId, isSelected) {
   const matcher = (btn) => btn.getAttribute('data-series-id') === seriesId;
   document.querySelectorAll('.dual-button').forEach((btn) => {
@@ -121,6 +158,9 @@ function sanitizeId(value) {
 function clearPlots() {
   document.getElementById('dual-plot-gamma').innerHTML = '';
   document.getElementById('dual-plot-n').innerHTML = '';
+  selectedPlotCards.gamma.clear();
+  selectedPlotCards.n.clear();
+  updateRemoveButtons();
 }
 
 function plotSelected() {
@@ -129,6 +169,9 @@ function plotSelected() {
   const nGrid = document.getElementById('dual-plot-n');
   gammaGrid.innerHTML = '';
   nGrid.innerHTML = '';
+  selectedPlotCards.gamma.clear();
+  selectedPlotCards.n.clear();
+  updateRemoveButtons();
   if (!seriesIds.length) {
     gammaGrid.textContent = 'Select dual values to plot.';
     nGrid.textContent = 'Select dual values to plot.';
@@ -174,53 +217,66 @@ function plotSelected() {
         return;
       }
       const safeId = sanitizeId(seriesId);
+      const safeKey = `${safeId}-${Math.random().toString(36).slice(2, 8)}`;
       const gammaCard = document.createElement('div');
       gammaCard.className = 'dual-plot-card';
+      gammaCard.setAttribute('data-series-id', seriesId);
       gammaCard.innerHTML = `
         <div class="dual-plot-card-title">${escapeHtml(series.label)}</div>
-        <div id="gamma-${safeId}" class="dual-plot-chart"></div>
+        <div id="gamma-${safeKey}" class="dual-plot-chart"></div>
       `;
       gammaConstraintGrid.appendChild(gammaCard);
+      gammaCard.addEventListener('click', () => togglePlotCardSelection(gammaCard, selectedPlotCards.gamma));
 
       const nCard = document.createElement('div');
       nCard.className = 'dual-plot-card';
+      nCard.setAttribute('data-series-id', seriesId);
       nCard.innerHTML = `
         <div class="dual-plot-card-title">${escapeHtml(series.label)}</div>
-        <div id="n-${safeId}" class="dual-plot-chart"></div>
+        <div id="n-${safeKey}" class="dual-plot-chart"></div>
       `;
       nConstraintGrid.appendChild(nCard);
+      nCard.addEventListener('click', () => togglePlotCardSelection(nCard, selectedPlotCards.n));
 
       const gammaCount = series.gamma_dual.filter((value) => value !== null && Number.isFinite(value)).length;
-      Plotly.newPlot(`gamma-${safeId}`, [{
-      x: series.gamma_values,
-      y: series.gamma_dual,
-      mode: gammaCount <= 1 ? 'markers' : 'lines',
-      name: series.label,
-    }], {
-      autosize: true,
-      xaxis: { title: '', tickfont: { size: 9 } },
-      yaxis: { title: '', tickfont: { size: 9 } },
-      margin: { t: 10, l: 30, r: 10, b: 15 },
-    }, { displayModeBar: false, responsive: true });
+      Plotly.newPlot(`gamma-${safeKey}`, [{
+        x: series.gamma_values,
+        y: series.gamma_dual,
+        mode: gammaCount <= 1 ? 'markers' : 'lines',
+        name: series.label,
+      }], {
+        autosize: true,
+        xaxis: { title: '', tickfont: { size: 9 } },
+        yaxis: { title: '', tickfont: { size: 9 } },
+        margin: { t: 10, l: 30, r: 10, b: 15 },
+      }, { displayModeBar: false, responsive: true });
 
       const nCount = series.n_dual.filter((value) => value !== null && Number.isFinite(value)).length;
-      Plotly.newPlot(`n-${safeId}`, [{
-      x: series.n_values,
-      y: series.n_dual,
-      mode: nCount <= 1 ? 'markers' : 'lines',
-      name: series.label,
-    }], {
-      autosize: true,
-      xaxis: { title: '', tickfont: { size: 9 } },
-      yaxis: { title: '', tickfont: { size: 9 } },
-      margin: { t: 10, l: 30, r: 10, b: 15 },
-    }, { displayModeBar: false, responsive: true });
+      Plotly.newPlot(`n-${safeKey}`, [{
+        x: series.n_values,
+        y: series.n_dual,
+        mode: nCount <= 1 ? 'markers' : 'lines',
+        name: series.label,
+      }], {
+        autosize: true,
+        xaxis: { title: '', tickfont: { size: 9 } },
+        yaxis: { title: '', tickfont: { size: 9 } },
+        margin: { t: 10, l: 30, r: 10, b: 15 },
+      }, { displayModeBar: false, responsive: true });
     });
   });
 }
 
 plotBtn.addEventListener('click', () => {
   ensurePlotly(plotSelected);
+});
+
+removeGammaBtn.addEventListener('click', () => {
+  removeSelectedSeries(selectedPlotCards.gamma);
+});
+
+removeNBtn.addEventListener('click', () => {
+  removeSelectedSeries(selectedPlotCards.n);
 });
 
 clearBtn.addEventListener('click', () => {
@@ -257,3 +313,4 @@ toggleBtn.classList.toggle('is-active', hideZero);
 toggleBtn.textContent = hideZero ? 'Show all-zero duals' : 'Hide all-zero duals';
 applyZeroFilter();
 updateClearButton();
+updateRemoveButtons();

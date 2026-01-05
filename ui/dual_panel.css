@@ -44,6 +44,9 @@
   gap: 10px;
   margin: 6px 0 4px 0;
 }
+.dual-plot-actions-inline {
+  margin: 0 0 6px 0;
+}
 .dual-plot-button {
   border: 1px solid #ff4d00;
   background: #ff4d00;
@@ -119,6 +122,9 @@
   max-width: 360px;
   box-sizing: border-box;
 }
+.dual-plot-card.is-selected {
+  outline: 2px solid #ff4d00;
+}
 .dual-plot-card-title {
   font-weight: 600;
   margin-bottom: 6px;
@@ -162,6 +168,19 @@
 }
 .dual-clear-button:hover {
   background: #f2f2f2;
+}
+.dual-remove-button {
+  border: 1px solid #cb0000;
+  background: #cb0000;
+  color: #ffffff;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.dual-remove-button:hover {
+  border: 1px solid #e65e5e;
+  background: #e65e5e;
 }
 .dual-selected-list {
   display: flex;
