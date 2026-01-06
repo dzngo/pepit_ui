@@ -224,11 +224,9 @@ def get_tau_grid(
             except AlgorithmEvaluationError as exc:
                 message = f"{spec.name}: {exc}"
                 warnings.add(message)
-                point_cache[point_key] = (float("nan"), message, {})
             except Exception as exc:
                 message = f"{spec.name}: unexpected error - {exc}"
                 warnings.add(message)
-                point_cache[point_key] = (float("nan"), message, {})
             completed += 1
             if completed % update_every == 0 or completed == total:
                 fraction = completed / total
@@ -401,18 +399,10 @@ def build_dual_series_data(
         constraint, dual_key = series_meta.get(key, ("", ""))
         gamma_dual = gamma_series[key]
         n_dual = n_series[key]
-        gamma_values_clean = [
-            value for value in gamma_dual if value is not None and np.isfinite(value)
-        ]
-        n_values_clean = [
-            value for value in n_dual if value is not None and np.isfinite(value)
-        ]
-        all_zero_gamma = bool(gamma_values_clean) and all(
-            abs(value) <= 1e-12 for value in gamma_values_clean
-        )
-        all_zero_n = bool(n_values_clean) and all(
-            abs(value) <= 1e-12 for value in n_values_clean
-        )
+        gamma_values_clean = [value for value in gamma_dual if value is not None and np.isfinite(value)]
+        n_values_clean = [value for value in n_dual if value is not None and np.isfinite(value)]
+        all_zero_gamma = bool(gamma_values_clean) and all(abs(value) <= 1e-12 for value in gamma_values_clean)
+        all_zero_n = bool(n_values_clean) and all(abs(value) <= 1e-12 for value in n_values_clean)
         series_data[key] = {
             "constraint": constraint,
             "dual_key": dual_key,
