@@ -39,8 +39,10 @@ function updateClearButton() {
 }
 
 function updateRemoveButtons() {
-  removeGammaBtn.style.display = selectedPlotCards.gamma.size ? 'inline-flex' : 'none';
-  removeNBtn.style.display = selectedPlotCards.n.size ? 'inline-flex' : 'none';
+  const hasSelection = selectedPlotCards.gamma.size || selectedPlotCards.n.size;
+  const display = hasSelection ? 'inline-flex' : 'none';
+  removeGammaBtn.style.display = display;
+  removeNBtn.style.display = display;
 }
 
 function togglePlotCardSelection(card, set) {
@@ -48,24 +50,35 @@ function togglePlotCardSelection(card, set) {
   if (!seriesId) {
     return;
   }
-  if (set.has(seriesId)) {
-    set.delete(seriesId);
-    card.classList.remove('is-selected');
-  } else {
-    set.add(seriesId);
-    card.classList.add('is-selected');
-  }
+  const select = !set.has(seriesId);
+  const applyToSet = (targetSet) => {
+    if (select) {
+      targetSet.add(seriesId);
+    } else {
+      targetSet.delete(seriesId);
+    }
+  };
+  applyToSet(selectedPlotCards.gamma);
+  applyToSet(selectedPlotCards.n);
+  document.querySelectorAll(`.dual-plot-card[data-series-id="${seriesId}"]`).forEach((el) => {
+    if (select) {
+      el.classList.add('is-selected');
+    } else {
+      el.classList.remove('is-selected');
+    }
+  });
   updateRemoveButtons();
 }
 
-function removeSelectedSeries(set) {
-  set.forEach((seriesId) => {
+function removeSelectedSeries(seriesIds) {
+  seriesIds.forEach((seriesId) => {
     if (selected.has(seriesId)) {
       selected.delete(seriesId);
       setButtonsSelected(seriesId, false);
     }
   });
-  set.clear();
+  selectedPlotCards.gamma.clear();
+  selectedPlotCards.n.clear();
   updateList();
   updateClearButton();
   clearPlots();
@@ -272,11 +285,19 @@ plotBtn.addEventListener('click', () => {
 });
 
 removeGammaBtn.addEventListener('click', () => {
-  removeSelectedSeries(selectedPlotCards.gamma);
+  const seriesIds = new Set([
+    ...selectedPlotCards.gamma,
+    ...selectedPlotCards.n,
+  ]);
+  removeSelectedSeries(seriesIds);
 });
 
 removeNBtn.addEventListener('click', () => {
-  removeSelectedSeries(selectedPlotCards.n);
+  const seriesIds = new Set([
+    ...selectedPlotCards.gamma,
+    ...selectedPlotCards.n,
+  ]);
+  removeSelectedSeries(seriesIds);
 });
 
 clearBtn.addEventListener('click', () => {
