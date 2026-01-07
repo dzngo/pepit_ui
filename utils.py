@@ -158,14 +158,21 @@ def get_tau_grid(
     other_params: Dict[str, float],
     *,
     show_progress: bool,
+    rerun_nan_cache: bool = False,
 ):
     grid_cache = st.session_state.setdefault("tau_grid_cache", {})
     key = make_cache_key(algo_key, gamma_spec, n_spec, other_params)
     if key in grid_cache:
         cached = grid_cache[key]
         if isinstance(cached, tuple) and len(cached) == 5:
-            return cached
-        grid_cache.pop(key, None)
+            if not rerun_nan_cache:
+                return cached
+            cached_tau_grid = cached[2]
+            if isinstance(cached_tau_grid, np.ndarray) and not np.isnan(cached_tau_grid).any():
+                return cached
+            grid_cache.pop(key, None)
+        else:
+            grid_cache.pop(key, None)
 
     spec = ALGORITHMS[algo_key]
     point_cache = _load_point_cache()
@@ -190,7 +197,15 @@ def get_tau_grid(
                 cached_duals = {}
             else:
                 cached_tau, cached_warning, cached_duals = cached_point
-            tau_grid[i, j] = float(cached_tau)
+            if rerun_nan_cache:
+                try:
+                    if cached_tau is None or not np.isfinite(float(cached_tau)):
+                        missing.append((i, j, float(gamma_value), float(n_value), point_key))
+                        continue
+                except (TypeError, ValueError):
+                    missing.append((i, j, float(gamma_value), float(n_value), point_key))
+                    continue
+            tau_grid[i, j] = np.nan if cached_tau is None else float(cached_tau)
             duals_grid[i][j] = cached_duals or {}
             if cached_warning:
                 warnings.add(cached_warning)
@@ -224,6 +239,7 @@ def get_tau_grid(
             except AlgorithmEvaluationError as exc:
                 message = f"{spec.name}: {exc}"
                 warnings.add(message)
+                point_cache[point_key] = (np.nan, message, {})
             except Exception as exc:
                 message = f"{spec.name}: unexpected error - {exc}"
                 warnings.add(message)

@@ -29,6 +29,7 @@ def init_session_state():
     st.session_state.setdefault("pending_settings", None)
     st.session_state.setdefault("active_settings", None)
     st.session_state.setdefault("other_editor_open", False)
+    st.session_state.setdefault("rerun_nan_caches", False)
 
 
 def reset_for_algorithm_change(algo_key: str):
@@ -111,6 +112,8 @@ def render_config_phase(algo_key: str, spec):
             for key in stale_keys:
                 current_params.pop(key, None)
 
+    st.checkbox("Rerun Nan caches", key="rerun_nan_caches")
+
     if st.button("Plot"):
         errors = []
         if gamma_settings["max"] <= gamma_settings["min"]:
@@ -148,6 +151,7 @@ def render_config_phase(algo_key: str, spec):
             "gamma_spec": gamma_spec,
             "n_spec": n_spec,
             "other_params": dict(current_params),
+            "rerun_nan_caches": bool(st.session_state.get("rerun_nan_caches", False)),
         }
         st.session_state["ui_phase"] = "loading"
         st.rerun()
@@ -176,6 +180,7 @@ def render_loading_phase(algo_key: str, spec):
         n_spec,
         pending["other_params"],
         show_progress=True,
+        rerun_nan_cache=bool(pending.get("rerun_nan_caches", False)),
     )
     if result is None:
         st.error("Unable to compute tau grid.")
@@ -227,6 +232,7 @@ def render_other_params_editor(algo_key: str, spec, settings):
                 "gamma_spec": settings["gamma_spec"],
                 "n_spec": settings["n_spec"],
                 "other_params": dict(new_values),
+                "rerun_nan_caches": bool(settings.get("rerun_nan_caches", False)),
             }
     st.session_state["other_editor_open"] = False
     st.session_state["ui_phase"] = "loading"
@@ -245,6 +251,7 @@ def render_results_phase(algo_key: str, spec):
         settings["n_spec"],
         settings["other_params"],
         show_progress=False,
+        rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
     )
     if cached is None:
         st.session_state["pending_settings"] = settings
