@@ -9,6 +9,7 @@ from PEPit import PEP, Point
 import PEPit.functions as functions
 from PEPit.primitive_steps import proximal_step
 
+
 class AlgorithmEvaluationError(RuntimeError):
     """Raised when a solver-backed function cannot return tau."""
 
@@ -220,8 +221,7 @@ def _build_param_specs(cls: type) -> List[FunctionParamSpec]:
         param_type = _normalize_param_type(type_str, default)
         required = param.default is inspect.Parameter.empty
         if param_type == "float" and isinstance(default, (int, float)) and not isfinite(float(default)):
-            desc = (desc + " Default is infinity.").strip()
-            default = None
+            desc = (desc + ". Default is infinity.").strip()
         specs.append(
             FunctionParamSpec(
                 name=name,

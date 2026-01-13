@@ -150,82 +150,86 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             if not function_spec.hyperparameters:
                 st.caption(f"{slot.label} has no required parameters.")
             else:
-                for param in function_spec.hyperparameters:
-                    with st.container(border=True):
-                        input_key = f"function-param-{algo_key}-{slot.key}-{param.name}"
-                        if param.param_type == "float":
-                            default_text = _float_text_default(slot_params.get(param.name, param.default))
-                            raw_value = st.text_input(
-                                param.name,
-                                value=st.session_state.get(input_key, default_text),
-                                key=input_key,
-                            )
-                            parsed_value, error = _parse_float_input(raw_value)
-                            if error:
-                                function_param_errors.append(f"{slot.label} {param.name}: {error}")
-                            else:
-                                if param.required and parsed_value is None:
-                                    function_param_errors.append(f"{slot.label} {param.name}: value required.")
-                                elif parsed_value is not None and parsed_value < 0:
-                                    function_param_errors.append(f"{slot.label} {param.name}: value must be >= 0.")
+                columns = st.columns(3)
+                for idx, param in enumerate(function_spec.hyperparameters):
+                    with columns[idx % 3]:
+                        with st.container(border=True):
+                            input_key = f"function-param-{algo_key}-{slot.key}-{param.name}"
+                            if param.param_type == "float":
+                                default_text = _float_text_default(slot_params.get(param.name, param.default))
+                                st.session_state.setdefault(input_key, default_text)
+                                raw_value = st.text_input(param.name, key=input_key)
+                                parsed_value, error = _parse_float_input(raw_value)
+                                if error:
+                                    function_param_errors.append(f"{slot.label} {param.name}: {error}")
                                 else:
-                                    slot_params[param.name] = parsed_value
-                            if param.description:
-                                st.caption(param.description)
-                            st.caption("Use 'inf' or 'infinity' for infinity.")
-                        elif param.param_type == "BlockPartition":
-                            d_value = st.number_input(
-                                f"{param.name} (d)",
-                                min_value=0,
-                                step=1,
-                                value=int(slot_params.get(param.name, 1) or 1),
-                                key=input_key,
-                            )
-                            slot_params[param.name] = int(d_value)
-                            if param.description:
-                                st.caption(param.description)
-                            st.caption("Partition will be created via `problem.declare_block_partition(d=...)`.")
-                        elif param.param_type == "Point":
-                            checked = st.checkbox(
-                                param.name,
-                                value=bool(slot_params.get(param.name, False)),
-                                key=input_key,
-                            )
-                            slot_params[param.name] = bool(checked)
-                            if param.description:
-                                st.caption(param.description)
-                            st.caption("When checked, a Point is created and passed as `center`.")
-                        elif param.param_type == "list":
-                            desc = param.description
-                            if desc:
-                                desc += " "
-                            desc += "Enter list values separated by ','."
-                            existing = slot_params.get(param.name, param.default)
-                            if isinstance(existing, list):
-                                default_text = ", ".join(str(value) for value in existing)
-                            else:
-                                default_text = ""
-                            raw_value = st.text_input(
-                                param.name,
-                                value=st.session_state.get(input_key, default_text),
-                                key=input_key,
-                            )
-                            parsed_list, error = _parse_float_list(raw_value)
-                            if error:
-                                function_param_errors.append(f"{slot.label} {param.name}: {error}")
-                            else:
-                                if param.required and not parsed_list:
-                                    function_param_errors.append(f"{slot.label} {param.name}: value required.")
+                                    if param.required and parsed_value is None:
+                                        function_param_errors.append(f"{slot.label} {param.name}: value required.")
+                                    elif parsed_value is not None and parsed_value < 0:
+                                        function_param_errors.append(f"{slot.label} {param.name}: value must be >= 0.")
+                                    else:
+                                        slot_params[param.name] = parsed_value
+                                if param.description:
+                                    st.caption(param.description)
+                            elif param.param_type == "BlockPartition":
+                                d_value = st.number_input(
+                                    f"{param.name} (d)",
+                                    min_value=0,
+                                    step=1,
+                                    value=int(slot_params.get(param.name, 1) or 1),
+                                    key=input_key,
+                                )
+                                slot_params[param.name] = int(d_value)
+                                desc_parts = []
+                                if param.description:
+                                    desc_parts.append(param.description)
+                                desc_parts.append(
+                                    "Partition will be created via `problem.declare_block_partition(d=...)`."
+                                )
+                                st.caption(" ".join(desc_parts))
+                            elif param.param_type == "Point":
+                                checked = st.checkbox(
+                                    param.name,
+                                    value=bool(slot_params.get(param.name, False)),
+                                    key=input_key,
+                                )
+                                slot_params[param.name] = bool(checked)
+                                desc_parts = []
+                                if param.description:
+                                    desc_parts.append(param.description)
+                                desc_parts.append("When checked, a Point is created and passed as `center`.")
+                                st.caption(" ".join(desc_parts))
+                            elif param.param_type == "list":
+                                desc = param.description
+                                if desc:
+                                    desc += " "
+                                desc += "Enter list values separated by ','"
+                                existing = slot_params.get(param.name, param.default)
+                                if isinstance(existing, list):
+                                    default_text = ", ".join(str(value) for value in existing)
                                 else:
-                                    slot_params[param.name] = parsed_list
-                            st.caption(desc)
-                        else:
-                            raw_value = st.text_input(
-                                param.name,
-                                value=str(slot_params.get(param.name, param.default) or ""),
-                                key=input_key,
-                            )
-                            slot_params[param.name] = raw_value
+                                    default_text = ""
+                                raw_value = st.text_input(
+                                    param.name,
+                                    value=st.session_state.get(input_key, default_text),
+                                    key=input_key,
+                                )
+                                parsed_list, error = _parse_float_list(raw_value)
+                                if error:
+                                    function_param_errors.append(f"{slot.label} {param.name}: {error}")
+                                else:
+                                    if param.required and not parsed_list:
+                                        function_param_errors.append(f"{slot.label} {param.name}: value required.")
+                                    else:
+                                        slot_params[param.name] = parsed_list
+                                st.caption(desc)
+                            else:
+                                raw_value = st.text_input(
+                                    param.name,
+                                    value=str(slot_params.get(param.name, param.default) or ""),
+                                    key=input_key,
+                                )
+                                slot_params[param.name] = raw_value
                 stale_params = set(slot_params) - {p.name for p in function_spec.hyperparameters}
                 for key in stale_params:
                     slot_params.pop(key, None)
