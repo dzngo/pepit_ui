@@ -1,5 +1,6 @@
 # utils.py
 import html
+from math import isfinite
 import pickle
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ from algorithms_registry import (
     ALGORITHMS,
     AlgorithmEvaluationError,
     HyperparameterSpec,
+    run_algorithm,
 )
 
 
@@ -62,8 +64,8 @@ def _round_value(value: float, *, digits: int = 12) -> float:
     return float(round(float(value), digits))
 
 
-def _normalize_other_params(other_params: Dict[str, float]) -> Tuple[Tuple[str, float], ...]:
-    return tuple(sorted((name, _round_value(value)) for name, value in other_params.items()))
+def _normalize_params(params: Dict[str, float]) -> Tuple[Tuple[str, float], ...]:
+    return tuple(sorted((name, _round_value(value)) for name, value in params.items()))
 
 
 def _quantize_value(value: float, spec: HyperparameterSpec) -> float:
@@ -102,15 +104,28 @@ def _save_point_cache(cache: Dict[Tuple, Tuple[float, str | None, Dict[str, Dict
         return
 
 
+def _normalize_function_config(function_config: Dict[str, Dict[str, float]]) -> Tuple:
+    normalized = []
+    for slot_key, config in sorted(function_config.items()):
+        function_key = config["function_key"]
+        function_params = config["function_params"]
+        normalized.append((slot_key, function_key, _normalize_params(function_params)))
+    return tuple(normalized)
+
+
 def _point_cache_key(
     algo_key: str,
-    other_params: Dict[str, float],
+    function_config: Dict[str, Dict[str, float]],
+    initial_condition_key: str,
+    performance_metric_key: str,
     gamma_value: float,
     n_value: float,
 ) -> Tuple:
     return (
         algo_key,
-        _normalize_other_params(other_params),
+        _normalize_function_config(function_config),
+        initial_condition_key,
+        performance_metric_key,
         _round_value(gamma_value),
         _round_value(n_value),
     )
@@ -120,7 +135,9 @@ def make_cache_key(
     algo_key: str,
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,
-    other_params: Dict[str, float],
+    function_config: Dict[str, Dict[str, float]],
+    initial_condition_key: str,
+    performance_metric_key: str,
 ) -> Tuple:
     return (
         algo_key,
@@ -136,7 +153,9 @@ def make_cache_key(
             n_spec.step,
             n_spec.value_type,
         ),
-        _normalize_other_params(other_params),
+        _normalize_function_config(function_config),
+        initial_condition_key,
+        performance_metric_key,
     )
 
 
@@ -144,24 +163,45 @@ def clear_grid_cache_entry(
     algo_key: str,
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,
-    other_params: Dict[str, float],
+    function_config: Dict[str, Dict[str, float]],
+    initial_condition_key: str,
+    performance_metric_key: str,
 ) -> None:
     cache = st.session_state.get("tau_grid_cache")
     if cache is not None:
-        cache.pop(make_cache_key(algo_key, gamma_spec, n_spec, other_params), None)
+        cache.pop(
+            make_cache_key(
+                algo_key,
+                gamma_spec,
+                n_spec,
+                function_config,
+                initial_condition_key,
+                performance_metric_key,
+            ),
+            None,
+        )
 
 
 def get_tau_grid(
     algo_key: str,
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,
-    other_params: Dict[str, float],
+    function_config: Dict[str, Dict[str, float]],
+    initial_condition_key: str,
+    performance_metric_key: str,
     *,
     show_progress: bool,
     rerun_nan_cache: bool = False,
 ):
     grid_cache = st.session_state.setdefault("tau_grid_cache", {})
-    key = make_cache_key(algo_key, gamma_spec, n_spec, other_params)
+    key = make_cache_key(
+        algo_key,
+        gamma_spec,
+        n_spec,
+        function_config,
+        initial_condition_key,
+        performance_metric_key,
+    )
     if key in grid_cache:
         cached = grid_cache[key]
         if isinstance(cached, tuple) and len(cached) == 5:
@@ -187,7 +227,14 @@ def get_tau_grid(
         gamma_key = _quantize_value(float(gamma_value), gamma_spec)
         for j, n_value in enumerate(n_values):
             n_key = _quantize_value(float(n_value), n_spec)
-            point_key = _point_cache_key(algo_key, other_params, gamma_key, n_key)
+            point_key = _point_cache_key(
+                algo_key,
+                function_config,
+                initial_condition_key,
+                performance_metric_key,
+                gamma_key,
+                n_key,
+            )
             cached_point = point_cache.get(point_key)
             if cached_point is None or not isinstance(cached_point, tuple):
                 missing.append((i, j, float(gamma_value), float(n_value), point_key))
@@ -223,10 +270,15 @@ def get_tau_grid(
 
         for i, j, gamma_value, n_value, point_key in missing:
             try:
-                raw = spec.algo(
-                    gamma=float(gamma_value),
-                    n=float(n_value),
-                    **other_params,
+                raw = run_algorithm(
+                    algo_spec=spec,
+                    function_config=function_config,
+                    initial_condition_key=initial_condition_key,
+                    performance_metric_key=performance_metric_key,
+                    algo_params={
+                        "gamma": float(gamma_value),
+                        "n": float(n_value),
+                    },
                 )
                 if isinstance(raw, tuple) and len(raw) == 2:
                     tau_raw, duals = raw
@@ -473,3 +525,45 @@ def build_dual_section_html(
             total_buttons += 1
         section_html.append("</div>")
     return "".join(section_html), total_buttons
+
+
+def _float_default(param_default: object | None) -> float:
+    if isinstance(param_default, (int, float)) and isfinite(float(param_default)):
+        return float(param_default)
+    return 1.0
+
+
+def _float_text_default(param_default: object | None) -> str:
+    if isinstance(param_default, (int, float)):
+        value = float(param_default)
+        if isfinite(value):
+            return str(value)
+        return "inf"
+    return ""
+
+
+def _parse_float_input(raw: str) -> tuple[float | None, str | None]:
+    text = raw.strip().lower()
+    if not text:
+        return None, None
+    if text in {"inf", "infinity", "+inf", "+infinity", "np.inf"}:
+        return float("inf"), None
+    try:
+        return float(text), None
+    except ValueError:
+        return None, f"Invalid float value: {raw!r}"
+
+
+def _parse_float_list(raw: str) -> tuple[list[float], str | None]:
+    text = raw.strip()
+    if not text:
+        return [], None
+    values: list[float] = []
+    for part in text.split(","):
+        if not part.strip():
+            continue
+        try:
+            values.append(float(part.strip()))
+        except ValueError:
+            return [], f"Invalid list value: {part.strip()!r}"
+    return values, None

@@ -6,17 +6,18 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
-from algorithms_registry import HyperparameterSpec
+from algorithms_registry import AlgorithmSpec, HyperparameterSpec, FUNCTIONS, INITIAL_CONDITIONS, PERFORMANCE_METRICS
 from utils import (
     BASE_GAMMA_SPEC,
     BASE_N_SPEC,
+    _float_text_default,
+    _parse_float_input,
+    _parse_float_list,
     build_dual_series_data,
     build_dual_section_html,
     clamp_value,
-    clear_grid_cache_entry,
     dual_fluctuations_by_slice,
     get_tau_grid,
-    slider_for_param,
     value_index,
 )
 
@@ -25,11 +26,13 @@ def init_session_state():
     st.session_state.setdefault("ui_phase", "config")
     st.session_state.setdefault("selected_algorithm", None)
     st.session_state.setdefault("range_store", {})
-    st.session_state.setdefault("other_params_store", {})
     st.session_state.setdefault("pending_settings", None)
     st.session_state.setdefault("active_settings", None)
-    st.session_state.setdefault("other_editor_open", False)
     st.session_state.setdefault("rerun_nan_caches", False)
+    st.session_state.setdefault("function_store", {})
+    st.session_state.setdefault("function_params_store", {})
+    st.session_state.setdefault("initial_condition_store", {})
+    st.session_state.setdefault("performance_metric_store", {})
 
 
 def reset_for_algorithm_change(algo_key: str):
@@ -37,7 +40,6 @@ def reset_for_algorithm_change(algo_key: str):
     st.session_state["ui_phase"] = "config"
     st.session_state["pending_settings"] = None
     st.session_state["active_settings"] = None
-    st.session_state["other_editor_open"] = False
 
 
 def render_range_inputs(label: str, base: HyperparameterSpec, stored: dict) -> dict:
@@ -80,10 +82,39 @@ def render_range_inputs(label: str, base: HyperparameterSpec, stored: dict) -> d
     return {"min": float(min_value), "max": float(max_value), "step": float(step_value)}
 
 
-def render_config_phase(algo_key: str, spec):
+def _build_config_summary(spec: AlgorithmSpec, settings: dict) -> dict:
+    gamma_spec = settings["gamma_spec"]
+    n_spec = settings["n_spec"]
+    summary = {
+        "algorithm": spec.name,
+        "steps": spec.description,
+        "initial_condition": INITIAL_CONDITIONS[settings["initial_condition_key"]].label,
+        "performance_metric": PERFORMANCE_METRICS[settings["performance_metric_key"]].label,
+        "gamma": {
+            "min": gamma_spec.min_value,
+            "max": gamma_spec.max_value,
+            "step": gamma_spec.step,
+        },
+        "n": {
+            "min": n_spec.min_value,
+            "max": n_spec.max_value,
+            "step": n_spec.step,
+        },
+        "functions": {},
+    }
+    for slot in spec.function_slots:
+        slot_config = settings["function_config"][slot.key]
+        summary["functions"][slot.label] = {
+            "function": slot_config["function_key"],
+            "params": slot_config["function_params"],
+        }
+    return summary
+
+
+def render_config_phase(algo_key: str, spec: AlgorithmSpec):
     st.subheader("Configuration")
     with st.container(border=True):
-        st.write("Set gamma/n ranges and choose constant values for other parameters.")
+        st.write("Set gamma/n ranges.")
 
         range_store = st.session_state["range_store"]
         algo_ranges = range_store.setdefault(algo_key, {})
@@ -92,25 +123,137 @@ def render_config_phase(algo_key: str, spec):
         algo_ranges["gamma"] = gamma_settings
         algo_ranges["n"] = n_settings
 
-        params_store = st.session_state["other_params_store"]
-        current_params = params_store.setdefault(
-            algo_key,
-            {param.name: param.default for param in spec.hyperparameters},
-        )
     with st.container(border=True):
-        st.write("Other parameters")
-        if not spec.hyperparameters:
-            st.caption("This algorithm has no additional parameters.")
-        else:
-            for param in spec.hyperparameters:
-                current_params[param.name] = slider_for_param(
-                    param,
-                    value=current_params.get(param.name, param.default),
-                    key=f"config-{algo_key}-{param.name}",
-                )
-            stale_keys = set(current_params) - {p.name for p in spec.hyperparameters}
-            for key in stale_keys:
-                current_params.pop(key, None)
+        st.write("Functions")
+        function_store = st.session_state["function_store"]
+        function_params_store = st.session_state["function_params_store"]
+        algo_functions = function_store.setdefault(algo_key, {})
+        algo_function_params = function_params_store.setdefault(algo_key, {})
+        function_param_errors: list[str] = []
+        for slot in spec.function_slots:
+            default_function = spec.default_function_keys.get(slot.key)
+            selected_function = algo_functions.get(slot.key, default_function)
+            function_names = sorted(FUNCTIONS.keys())
+            selected_function = st.selectbox(
+                f"{slot.label} function",
+                options=function_names,
+                index=function_names.index(selected_function) if selected_function in function_names else 0,
+                key=f"function-{algo_key}-{slot.key}",
+            )
+            algo_functions[slot.key] = selected_function
+
+            function_spec = FUNCTIONS[selected_function]
+            slot_params = algo_function_params.setdefault(
+                slot.key,
+                {param.name: param.default for param in function_spec.hyperparameters},
+            )
+            if not function_spec.hyperparameters:
+                st.caption(f"{slot.label} has no required parameters.")
+            else:
+                for param in function_spec.hyperparameters:
+                    with st.container(border=True):
+                        input_key = f"function-param-{algo_key}-{slot.key}-{param.name}"
+                        if param.param_type == "float":
+                            default_text = _float_text_default(slot_params.get(param.name, param.default))
+                            raw_value = st.text_input(
+                                param.name,
+                                value=st.session_state.get(input_key, default_text),
+                                key=input_key,
+                            )
+                            parsed_value, error = _parse_float_input(raw_value)
+                            if error:
+                                function_param_errors.append(f"{slot.label} {param.name}: {error}")
+                            else:
+                                if param.required and parsed_value is None:
+                                    function_param_errors.append(f"{slot.label} {param.name}: value required.")
+                                elif parsed_value is not None and parsed_value < 0:
+                                    function_param_errors.append(f"{slot.label} {param.name}: value must be >= 0.")
+                                else:
+                                    slot_params[param.name] = parsed_value
+                            if param.description:
+                                st.caption(param.description)
+                            st.caption("Use 'inf' or 'infinity' for infinity.")
+                        elif param.param_type == "BlockPartition":
+                            d_value = st.number_input(
+                                f"{param.name} (d)",
+                                min_value=0,
+                                step=1,
+                                value=int(slot_params.get(param.name, 1) or 1),
+                                key=input_key,
+                            )
+                            slot_params[param.name] = int(d_value)
+                            if param.description:
+                                st.caption(param.description)
+                            st.caption("Partition will be created via `problem.declare_block_partition(d=...)`.")
+                        elif param.param_type == "Point":
+                            checked = st.checkbox(
+                                param.name,
+                                value=bool(slot_params.get(param.name, False)),
+                                key=input_key,
+                            )
+                            slot_params[param.name] = bool(checked)
+                            if param.description:
+                                st.caption(param.description)
+                            st.caption("When checked, a Point is created and passed as `center`.")
+                        elif param.param_type == "list":
+                            desc = param.description
+                            if desc:
+                                desc += " "
+                            desc += "Enter list values separated by ','."
+                            existing = slot_params.get(param.name, param.default)
+                            if isinstance(existing, list):
+                                default_text = ", ".join(str(value) for value in existing)
+                            else:
+                                default_text = ""
+                            raw_value = st.text_input(
+                                param.name,
+                                value=st.session_state.get(input_key, default_text),
+                                key=input_key,
+                            )
+                            parsed_list, error = _parse_float_list(raw_value)
+                            if error:
+                                function_param_errors.append(f"{slot.label} {param.name}: {error}")
+                            else:
+                                if param.required and not parsed_list:
+                                    function_param_errors.append(f"{slot.label} {param.name}: value required.")
+                                else:
+                                    slot_params[param.name] = parsed_list
+                            st.caption(desc)
+                        else:
+                            raw_value = st.text_input(
+                                param.name,
+                                value=str(slot_params.get(param.name, param.default) or ""),
+                                key=input_key,
+                            )
+                            slot_params[param.name] = raw_value
+                stale_params = set(slot_params) - {p.name for p in function_spec.hyperparameters}
+                for key in stale_params:
+                    slot_params.pop(key, None)
+
+    with st.container(border=True):
+        st.write("Initial condition and performance metric")
+        ic_store = st.session_state["initial_condition_store"]
+        pm_store = st.session_state["performance_metric_store"]
+        ic_options = list(INITIAL_CONDITIONS.keys())
+        pm_options = list(PERFORMANCE_METRICS.keys())
+        ic_default = ic_store.get(algo_key, spec.default_initial_condition)
+        pm_default = pm_store.get(algo_key, spec.default_performance_metric)
+        ic_selection = st.selectbox(
+            "Initial condition",
+            options=ic_options,
+            format_func=lambda key: INITIAL_CONDITIONS[key].label,
+            index=ic_options.index(ic_default) if ic_default in ic_options else 0,
+            key=f"ic-{algo_key}",
+        )
+        pm_selection = st.selectbox(
+            "Performance metric",
+            options=pm_options,
+            format_func=lambda key: PERFORMANCE_METRICS[key].label,
+            index=pm_options.index(pm_default) if pm_default in pm_options else 0,
+            key=f"pm-{algo_key}",
+        )
+        ic_store[algo_key] = ic_selection
+        pm_store[algo_key] = pm_selection
 
     st.checkbox("Rerun Nan caches", key="rerun_nan_caches")
 
@@ -124,6 +267,7 @@ def render_config_phase(algo_key: str, spec):
             errors.append("n max must be greater than n min.")
         if n_settings["step"] <= 0:
             errors.append("n step must be positive.")
+        errors.extend(function_param_errors)
         if errors:
             for error in errors:
                 st.error(error)
@@ -150,7 +294,15 @@ def render_config_phase(algo_key: str, spec):
             "algo_key": algo_key,
             "gamma_spec": gamma_spec,
             "n_spec": n_spec,
-            "other_params": dict(current_params),
+            "function_config": {
+                slot.key: {
+                    "function_key": st.session_state["function_store"][algo_key][slot.key],
+                    "function_params": dict(st.session_state["function_params_store"][algo_key][slot.key]),
+                }
+                for slot in spec.function_slots
+            },
+            "initial_condition_key": st.session_state["initial_condition_store"][algo_key],
+            "performance_metric_key": st.session_state["performance_metric_store"][algo_key],
             "rerun_nan_caches": bool(st.session_state.get("rerun_nan_caches", False)),
         }
         st.session_state["ui_phase"] = "loading"
@@ -167,18 +319,20 @@ def render_loading_phase(algo_key: str, spec):
     n_spec = pending["n_spec"]
     st.subheader(f"Computing tau values for `{spec.name}`")
     st.caption(f"Algorithm: {spec.description}")
-    other_display = ", ".join(f"{name}={value}" for name, value in pending["other_params"].items()) or "None"
     st.info(
         f"gamma: [{gamma_spec.min_value}, {gamma_spec.max_value}], step_size={gamma_spec.step}  \n"
-        f"n: [{n_spec.min_value}, {n_spec.max_value}], step_size={n_spec.step}  \n"
-        f"other params: {other_display}"
+        f"n: [{n_spec.min_value}, {n_spec.max_value}], step_size={n_spec.step}"
     )
+    with st.expander("Configuration details"):
+        st.json(_build_config_summary(spec, pending))
 
     result = get_tau_grid(
         algo_key,
         gamma_spec,
         n_spec,
-        pending["other_params"],
+        pending["function_config"],
+        pending["initial_condition_key"],
+        pending["performance_metric_key"],
         show_progress=True,
         rerun_nan_cache=bool(pending.get("rerun_nan_caches", False)),
     )
@@ -196,49 +350,6 @@ def render_loading_phase(algo_key: str, spec):
     st.rerun()
 
 
-def render_other_params_editor(algo_key: str, spec, settings):
-    if not spec.hyperparameters:
-        return
-    editor_open = st.session_state.get("other_editor_open", False)
-    params_store = st.session_state["other_params_store"]
-    params_store.setdefault(algo_key, dict(settings["other_params"]))
-
-    if not editor_open:
-        if st.button("Change other parameters"):
-            st.session_state["other_editor_open"] = True
-            st.rerun()
-        return
-    with st.container(border=True):
-        st.write("Adjust other parameters")
-        with st.form("other-params-edit"):
-            new_values = {}
-            for param in spec.hyperparameters:
-                new_values[param.name] = slider_for_param(
-                    param,
-                    value=params_store[algo_key].get(param.name, param.default),
-                    key=f"edit-{algo_key}-{param.name}",
-                )
-            submitted = st.form_submit_button("Replot")
-        if submitted:
-            params_store[algo_key] = new_values
-            clear_grid_cache_entry(
-                algo_key,
-                settings["gamma_spec"],
-                settings["n_spec"],
-                new_values,
-            )
-            st.session_state["pending_settings"] = {
-                "algo_key": algo_key,
-                "gamma_spec": settings["gamma_spec"],
-                "n_spec": settings["n_spec"],
-                "other_params": dict(new_values),
-                "rerun_nan_caches": bool(settings.get("rerun_nan_caches", False)),
-            }
-    st.session_state["other_editor_open"] = False
-    st.session_state["ui_phase"] = "loading"
-    st.rerun()
-
-
 def render_results_phase(algo_key: str, spec):
     settings = st.session_state.get("active_settings")
     if not settings or settings["algo_key"] != algo_key:
@@ -249,7 +360,9 @@ def render_results_phase(algo_key: str, spec):
         algo_key,
         settings["gamma_spec"],
         settings["n_spec"],
-        settings["other_params"],
+        settings["function_config"],
+        settings["initial_condition_key"],
+        settings["performance_metric_key"],
         show_progress=False,
         rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
     )
@@ -268,7 +381,8 @@ def render_results_phase(algo_key: str, spec):
         st.session_state["ui_phase"] = "config"
         st.rerun()
 
-    render_other_params_editor(algo_key, spec, settings)
+    with st.expander("Configuration details"):
+        st.json(_build_config_summary(spec, settings))
 
     gamma_slider_key = f"gamma_slider_{algo_key}"
     n_slider_key = f"n_slider_{algo_key}"
