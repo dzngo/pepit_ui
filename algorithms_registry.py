@@ -69,7 +69,7 @@ class FunctionSlot:
 class InitialConditionSpec:
     key: str
     label: str
-    apply: Callable[[PEP, dict, Dict[str, float]], None]
+    apply: Callable[[PEP, dict], None]
     hyperparameters: List[HyperparameterSpec] = field(default_factory=list)
 
 
@@ -77,14 +77,13 @@ class InitialConditionSpec:
 class PerformanceMetricSpec:
     key: str
     label: str
-    apply: Callable[[PEP, dict, Dict[str, float]], None]
+    apply: Callable[[PEP, dict], None]
     hyperparameters: List[HyperparameterSpec] = field(default_factory=list)
 
 
 @dataclass
 class AlgorithmSpec:
     name: str
-    description: str
     steps: Callable[[PEP, Dict[str, object], Dict[str, float]], dict]
     function_slots: List[FunctionSlot]
     default_function_keys: Dict[str, str]
@@ -306,19 +305,19 @@ def accelerated_proximal_point_steps(problem: PEP, funcs: Dict[str, object], par
     return {"x0": x0, "x": x, "xs": xs, "fs": fs, "funcs": funcs, "func": func}
 
 
-def ic_unit_distance(problem: PEP, state: dict, params: Dict[str, float]) -> None:
+def ic_unit_distance(problem: PEP, state: dict) -> None:
     problem.set_initial_condition((state["x0"] - state["xs"]) ** 2 <= 1)
 
 
-def pm_function_gap(problem: PEP, state: dict, params: Dict[str, float]) -> None:
+def pm_function_gap(problem: PEP, state: dict) -> None:
     problem.set_performance_metric(state["func"](state["x"]) - state["fs"])
 
 
-def pm_subgradient_gap(problem: PEP, state: dict, params: Dict[str, float]) -> None:
+def pm_subgradient_gap(problem: PEP, state: dict) -> None:
     problem.set_performance_metric(state["fx"] - state["fs"])
 
 
-def pm_distance_to_opt(problem: PEP, state: dict, params: Dict[str, float]) -> None:
+def pm_distance_to_opt(problem: PEP, state: dict) -> None:
     problem.set_performance_metric((state["x"] - state["xs"]) ** 2)
 
 
@@ -396,8 +395,8 @@ def run_algorithm(
     state = algo_spec.steps(problem, funcs, algo_params)
     initial_spec = INITIAL_CONDITIONS[initial_condition_key]
     perf_spec = PERFORMANCE_METRICS[performance_metric_key]
-    initial_spec.apply(problem, state, {})
-    perf_spec.apply(problem, state, {})
+    initial_spec.apply(problem, state)
+    perf_spec.apply(problem, state)
 
     tau = problem.solve(wrapper=wrapper, solver=solver, verbose=0)
     if tau is None:
@@ -413,7 +412,6 @@ def run_algorithm(
 ALGORITHMS: Dict[str, AlgorithmSpec] = {
     "gradient_descent": AlgorithmSpec(
         name="gradient_descent",
-        description="x = x - gamma * func.gradient(x)",
         steps=gradient_descent_steps,
         function_slots=[FunctionSlot(key="f", label="f")],
         default_function_keys={"f": "SmoothConvexFunction"},
@@ -422,7 +420,6 @@ ALGORITHMS: Dict[str, AlgorithmSpec] = {
     ),
     "subgradient_method": AlgorithmSpec(
         name="subgradient_method",
-        description="x = x - gamma * func.oracle(x)",
         steps=subgradient_method_steps,
         function_slots=[FunctionSlot(key="f", label="f")],
         default_function_keys={"f": "ConvexLipschitzFunction"},
@@ -431,7 +428,6 @@ ALGORITHMS: Dict[str, AlgorithmSpec] = {
     ),
     "proximal_gradient": AlgorithmSpec(
         name="proximal_gradient",
-        description="y = x - gamma * f1.gradient(x), x = proximal_step(y, f2, gamma)",
         steps=proximal_gradient_steps,
         function_slots=[FunctionSlot(key="f1", label="f1"), FunctionSlot(key="f2", label="f2")],
         default_function_keys={"f1": "SmoothStronglyConvexFunction", "f2": "ConvexFunction"},
@@ -440,9 +436,6 @@ ALGORITHMS: Dict[str, AlgorithmSpec] = {
     ),
     "accelerated_proximal_point": AlgorithmSpec(
         name="accelerated_proximal_point",
-        description="lam = (1 + sqrt(4 * lam_old**2 + 1)) / 2, "
-        "x = y - gamma * func.gradient(y), "
-        "y = x + ((lam_old - 1)/lam) * (x - x_old)",
         steps=accelerated_proximal_point_steps,
         function_slots=[FunctionSlot(key="f", label="f")],
         default_function_keys={"f": "SmoothStronglyConvexFunction"},

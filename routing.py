@@ -1,5 +1,6 @@
 # routing.py
 import json
+import inspect
 from pathlib import Path
 import numpy as np
 import plotly.graph_objects as go
@@ -82,33 +83,11 @@ def render_range_inputs(label: str, base: HyperparameterSpec, stored: dict) -> d
     return {"min": float(min_value), "max": float(max_value), "step": float(step_value)}
 
 
-def _build_config_summary(spec: AlgorithmSpec, settings: dict) -> dict:
-    gamma_spec = settings["gamma_spec"]
-    n_spec = settings["n_spec"]
-    summary = {
-        "algorithm": spec.name,
-        "steps": spec.description,
-        "initial_condition": INITIAL_CONDITIONS[settings["initial_condition_key"]].label,
-        "performance_metric": PERFORMANCE_METRICS[settings["performance_metric_key"]].label,
-        "gamma": {
-            "min": gamma_spec.min_value,
-            "max": gamma_spec.max_value,
-            "step": gamma_spec.step,
-        },
-        "n": {
-            "min": n_spec.min_value,
-            "max": n_spec.max_value,
-            "step": n_spec.step,
-        },
-        "functions": {},
-    }
-    for slot in spec.function_slots:
-        slot_config = settings["function_config"][slot.key]
-        summary["functions"][slot.label] = {
-            "function": slot_config["function_key"],
-            "params": slot_config["function_params"],
-        }
-    return summary
+def _steps_source(spec: AlgorithmSpec) -> str:
+    try:
+        return inspect.getsource(spec.steps)
+    except OSError:
+        return spec.steps.__name__
 
 
 def render_config_phase(algo_key: str, spec: AlgorithmSpec):
@@ -322,13 +301,27 @@ def render_loading_phase(algo_key: str, spec):
     gamma_spec = pending["gamma_spec"]
     n_spec = pending["n_spec"]
     st.subheader(f"Computing tau values for `{spec.name}`")
-    st.caption(f"Algorithm: {spec.description}")
-    st.info(
-        f"gamma: [{gamma_spec.min_value}, {gamma_spec.max_value}], step_size={gamma_spec.step}  \n"
-        f"n: [{n_spec.min_value}, {n_spec.max_value}], step_size={n_spec.step}"
-    )
-    with st.expander("Configuration details"):
-        st.json(_build_config_summary(spec, pending))
+
+    with st.container(border=True):
+        summary_lines = [
+            f"**Algorithm**: `{spec.name}`",
+            f"**gamma**: [{gamma_spec.min_value}, {gamma_spec.max_value}], step_size={gamma_spec.step}",
+            f"**n**: [{n_spec.min_value}, {n_spec.max_value}], step_size={n_spec.step}",
+            f"**Initial condition**: {INITIAL_CONDITIONS[pending['initial_condition_key']].label}",
+            f"**Performance metric**: {PERFORMANCE_METRICS[pending['performance_metric_key']].label}",
+        ]
+        st.markdown("<br>".join(summary_lines), unsafe_allow_html=True)
+        st.markdown("**Steps**")
+        st.code(_steps_source(spec), language="python")
+        st.markdown("**Functions**")
+        for slot in spec.function_slots:
+            slot_config = pending["function_config"][slot.key]
+            st.markdown(f"{slot.label}: `{slot_config['function_key']}`")
+            if slot_config["function_params"]:
+                params_line = ", ".join(f"{name}={value}" for name, value in slot_config["function_params"].items())
+                st.markdown(f"*params*: {params_line}")
+            else:
+                st.markdown("*params*: `{}`")
 
     result = get_tau_grid(
         algo_key,
@@ -380,13 +373,28 @@ def render_results_phase(algo_key: str, spec):
     n_spec = settings["n_spec"]
 
     st.subheader(f"Results for `{spec.name}`")
-    st.caption(f"Algorithm: {spec.description}")
     if st.button("Change gamma/n settings"):
         st.session_state["ui_phase"] = "config"
         st.rerun()
 
     with st.expander("Configuration details"):
-        st.json(_build_config_summary(spec, settings))
+        summary_lines = [
+            f"**Algorithm**: `{spec.name}`",
+            f"**Initial condition**: {INITIAL_CONDITIONS[settings['initial_condition_key']].label}",
+            f"**Performance metric**: {PERFORMANCE_METRICS[settings['performance_metric_key']].label}",
+        ]
+        st.markdown("<br>".join(summary_lines), unsafe_allow_html=True)
+        st.markdown("**Steps**")
+        st.code(_steps_source(spec), language="python")
+        st.markdown("**Functions**")
+        for slot in spec.function_slots:
+            slot_config = settings["function_config"][slot.key]
+            st.markdown(f"{slot.label}: `{slot_config['function_key']}`")
+            if slot_config["function_params"]:
+                params_line = ", ".join(f"{name}={value}" for name, value in slot_config["function_params"].items())
+                st.markdown(f"*params*: {params_line}")
+            else:
+                st.markdown("*params*: `{}`")
 
     gamma_slider_key = f"gamma_slider_{algo_key}"
     n_slider_key = f"n_slider_{algo_key}"
