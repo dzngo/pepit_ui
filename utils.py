@@ -182,7 +182,7 @@ def clear_grid_cache_entry(
         )
 
 
-def get_tau_grid(
+def compute(
     algo_key: str,
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,

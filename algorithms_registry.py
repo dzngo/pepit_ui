@@ -6,7 +6,9 @@ from math import sqrt
 from typing import Callable, Dict, List, Tuple
 
 from PEPit import PEP, Point
+from PEPit.function import Function
 import PEPit.functions as functions
+
 from PEPit.primitive_steps import proximal_step
 
 
@@ -45,9 +47,8 @@ class HyperparameterSpec:
 @dataclass
 class FunctionSpec:
     key: str
-    label: str
-    cls: type
-    hyperparameters: List["FunctionParamSpec"] = field(default_factory=list)
+    cls: Function
+    parameters: List["FunctionParamSpec"] = field(default_factory=list)
 
 
 @dataclass
@@ -62,7 +63,6 @@ class FunctionParamSpec:
 @dataclass
 class FunctionSlot:
     key: str
-    label: str
 
 
 @dataclass
@@ -233,9 +233,9 @@ def _build_param_specs(cls: type) -> List[FunctionParamSpec]:
     return specs
 
 
-def build_function_spec(key: str, cls: type) -> FunctionSpec:
+def build_function_spec(key: str, cls: Function) -> FunctionSpec:
     specs = _build_param_specs(cls)
-    return FunctionSpec(key=key, label=key, cls=cls, hyperparameters=specs)
+    return FunctionSpec(key=key, cls=cls, parameters=specs)
 
 
 FUNCTIONS: Dict[str, FunctionSpec] = {
@@ -243,7 +243,7 @@ FUNCTIONS: Dict[str, FunctionSpec] = {
 }
 
 
-def gradient_descent_steps(problem: PEP, funcs: Dict[str, object], params: Dict[str, float]) -> dict:
+def gradient_descent_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     func = funcs["f"]
     xs = func.stationary_point()
     fs = func(xs)
@@ -256,7 +256,7 @@ def gradient_descent_steps(problem: PEP, funcs: Dict[str, object], params: Dict[
     return {"x0": x0, "x": x, "xs": xs, "fs": fs, "funcs": funcs, "func": func}
 
 
-def subgradient_method_steps(problem: PEP, funcs: Dict[str, object], params: Dict[str, float]) -> dict:
+def subgradient_method_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     func = funcs["f"]
     xs = func.stationary_point()
     fs = func(xs)
@@ -266,12 +266,13 @@ def subgradient_method_steps(problem: PEP, funcs: Dict[str, object], params: Dic
     steps = int(params["n"])
     gamma = float(params["gamma"])
     for _ in range(steps):
+        problem.set_performance_metric(fx - fs)
         x = x - gamma * gx
         gx, fx = func.oracle(x)
     return {"x0": x0, "x": x, "xs": xs, "fs": fs, "fx": fx, "funcs": funcs, "func": func}
 
 
-def proximal_gradient_steps(problem: PEP, funcs: Dict[str, object], params: Dict[str, float]) -> dict:
+def proximal_gradient_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     f1 = funcs["f1"]
     f2 = funcs["f2"]
     func = f1 + f2
@@ -286,7 +287,7 @@ def proximal_gradient_steps(problem: PEP, funcs: Dict[str, object], params: Dict
     return {"x0": x0, "x": x, "xs": xs, "funcs": funcs, "func": func, "f1": f1, "f2": f2}
 
 
-def accelerated_proximal_point_steps(problem: PEP, funcs: Dict[str, object], params: Dict[str, float]) -> dict:
+def accelerated_proximal_point_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     func = funcs["f"]
     xs = func.stationary_point()
     fs = func(xs)
@@ -333,17 +334,17 @@ INITIAL_CONDITIONS: Dict[str, InitialConditionSpec] = {
 PERFORMANCE_METRICS: Dict[str, PerformanceMetricSpec] = {
     "function_gap": PerformanceMetricSpec(
         key="function_gap",
-        label="f(x) - f*",
+        label="func(x) - f*",
         apply=pm_function_gap,
     ),
     "subgradient_gap": PerformanceMetricSpec(
         key="subgradient_gap",
-        label="fx - f* (oracle)",
+        label="fx - f*",
         apply=pm_subgradient_gap,
     ),
     "distance_to_opt": PerformanceMetricSpec(
         key="distance_to_opt",
-        label="||x - xs||^2",
+        label="||x - x*||^2",
         apply=pm_distance_to_opt,
     ),
 }
@@ -361,12 +362,12 @@ def run_algorithm(
 ) -> Tuple[float, Dict[str, Dict[str, float]]]:
     problem = PEP()
     funcs: Dict[str, object] = {}
-    for slot in algo_spec.function_slots:
-        function_key = function_config[slot.key]["function_key"]
-        function_params = function_config[slot.key]["function_params"]
+    for slot_key, config in function_config.items():
+        function_key = config["function_key"]
+        function_params = config["function_params"]
         function_spec = FUNCTIONS[function_key]
         resolved_params: Dict[str, object] = {}
-        for param in function_spec.hyperparameters:
+        for param in function_spec.parameters:
             if param.name in function_params:
                 raw_value = function_params[param.name]
             elif param.default is not None:
@@ -390,7 +391,7 @@ def run_algorithm(
             else:
                 resolved_params[param.name] = raw_value
         func = problem.declare_function(function_spec.cls, **resolved_params)
-        funcs[slot.key] = func
+        funcs[slot_key] = func
 
     state = algo_spec.steps(problem, funcs, algo_params)
     initial_spec = INITIAL_CONDITIONS[initial_condition_key]
@@ -413,7 +414,7 @@ ALGORITHMS: Dict[str, AlgorithmSpec] = {
     "gradient_descent": AlgorithmSpec(
         name="gradient_descent",
         steps=gradient_descent_steps,
-        function_slots=[FunctionSlot(key="f", label="f")],
+        function_slots=[FunctionSlot(key="f")],
         default_function_keys={"f": "SmoothConvexFunction"},
         default_initial_condition="unit_distance_to_opt",
         default_performance_metric="function_gap",
@@ -421,7 +422,7 @@ ALGORITHMS: Dict[str, AlgorithmSpec] = {
     "subgradient_method": AlgorithmSpec(
         name="subgradient_method",
         steps=subgradient_method_steps,
-        function_slots=[FunctionSlot(key="f", label="f")],
+        function_slots=[FunctionSlot(key="f")],
         default_function_keys={"f": "ConvexLipschitzFunction"},
         default_initial_condition="unit_distance_to_opt",
         default_performance_metric="subgradient_gap",
@@ -429,7 +430,7 @@ ALGORITHMS: Dict[str, AlgorithmSpec] = {
     "proximal_gradient": AlgorithmSpec(
         name="proximal_gradient",
         steps=proximal_gradient_steps,
-        function_slots=[FunctionSlot(key="f1", label="f1"), FunctionSlot(key="f2", label="f2")],
+        function_slots=[FunctionSlot(key="f1"), FunctionSlot(key="f2")],
         default_function_keys={"f1": "SmoothStronglyConvexFunction", "f2": "ConvexFunction"},
         default_initial_condition="unit_distance_to_opt",
         default_performance_metric="distance_to_opt",
@@ -437,7 +438,7 @@ ALGORITHMS: Dict[str, AlgorithmSpec] = {
     "accelerated_proximal_point": AlgorithmSpec(
         name="accelerated_proximal_point",
         steps=accelerated_proximal_point_steps,
-        function_slots=[FunctionSlot(key="f", label="f")],
+        function_slots=[FunctionSlot(key="f")],
         default_function_keys={"f": "SmoothStronglyConvexFunction"},
         default_initial_condition="unit_distance_to_opt",
         default_performance_metric="function_gap",

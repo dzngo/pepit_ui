@@ -7,7 +7,13 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
-from algorithms_registry import AlgorithmSpec, HyperparameterSpec, FUNCTIONS, INITIAL_CONDITIONS, PERFORMANCE_METRICS
+from algorithms_registry import (
+    AlgorithmSpec,
+    HyperparameterSpec,
+    FUNCTIONS,
+    INITIAL_CONDITIONS,
+    PERFORMANCE_METRICS,
+)
 from utils import (
     BASE_GAMMA_SPEC,
     BASE_N_SPEC,
@@ -18,7 +24,7 @@ from utils import (
     build_dual_section_html,
     clamp_value,
     dual_fluctuations_by_slice,
-    get_tau_grid,
+    compute,
     value_index,
 )
 
@@ -91,6 +97,9 @@ def _steps_source(spec: AlgorithmSpec) -> str:
 
 
 def render_config_phase(algo_key: str, spec: AlgorithmSpec):
+    with st.expander("Algorithm details"):
+        st.code(_steps_source(spec), language="python")
+
     st.subheader("Configuration")
     with st.container(border=True):
         st.write("Set gamma/n ranges.")
@@ -113,8 +122,10 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             default_function = spec.default_function_keys.get(slot.key)
             selected_function = algo_functions.get(slot.key, default_function)
             function_names = sorted(FUNCTIONS.keys())
+            if selected_function not in function_names:
+                selected_function = function_names[0]
             selected_function = st.selectbox(
-                f"{slot.label} function",
+                f"{slot.key} function",
                 options=function_names,
                 index=function_names.index(selected_function) if selected_function in function_names else 0,
                 key=f"function-{algo_key}-{slot.key}",
@@ -124,13 +135,13 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             function_spec = FUNCTIONS[selected_function]
             slot_params = algo_function_params.setdefault(
                 slot.key,
-                {param.name: param.default for param in function_spec.hyperparameters},
+                {param.name: param.default for param in function_spec.parameters},
             )
-            if not function_spec.hyperparameters:
-                st.caption(f"{slot.label} has no required parameters.")
+            if not function_spec.parameters:
+                st.caption(f"{slot.key} has no required parameters.")
             else:
                 columns = st.columns(3)
-                for idx, param in enumerate(function_spec.hyperparameters):
+                for idx, param in enumerate(function_spec.parameters):
                     with columns[idx % 3]:
                         with st.container(border=True):
                             input_key = f"function-param-{algo_key}-{slot.key}-{param.name}"
@@ -140,12 +151,12 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                                 raw_value = st.text_input(param.name, key=input_key)
                                 parsed_value, error = _parse_float_input(raw_value)
                                 if error:
-                                    function_param_errors.append(f"{slot.label} {param.name}: {error}")
+                                    function_param_errors.append(f"{slot.key} {param.name}: {error}")
                                 else:
                                     if param.required and parsed_value is None:
-                                        function_param_errors.append(f"{slot.label} {param.name}: value required.")
+                                        function_param_errors.append(f"{slot.key} {param.name}: value required.")
                                     elif parsed_value is not None and parsed_value < 0:
-                                        function_param_errors.append(f"{slot.label} {param.name}: value must be >= 0.")
+                                        function_param_errors.append(f"{slot.key} {param.name}: value must be >= 0.")
                                     else:
                                         slot_params[param.name] = parsed_value
                                 if param.description:
@@ -195,10 +206,10 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                                 )
                                 parsed_list, error = _parse_float_list(raw_value)
                                 if error:
-                                    function_param_errors.append(f"{slot.label} {param.name}: {error}")
+                                    function_param_errors.append(f"{slot.key} {param.name}: {error}")
                                 else:
                                     if param.required and not parsed_list:
-                                        function_param_errors.append(f"{slot.label} {param.name}: value required.")
+                                        function_param_errors.append(f"{slot.key} {param.name}: value required.")
                                     else:
                                         slot_params[param.name] = parsed_list
                                 st.caption(desc)
@@ -209,7 +220,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                                     key=input_key,
                                 )
                                 slot_params[param.name] = raw_value
-                stale_params = set(slot_params) - {p.name for p in function_spec.hyperparameters}
+                stale_params = set(slot_params) - {p.name for p in function_spec.parameters}
                 for key in stale_params:
                     slot_params.pop(key, None)
 
@@ -314,16 +325,15 @@ def render_loading_phase(algo_key: str, spec):
         st.markdown("**Steps**")
         st.code(_steps_source(spec), language="python")
         st.markdown("**Functions**")
-        for slot in spec.function_slots:
-            slot_config = pending["function_config"][slot.key]
-            st.markdown(f"{slot.label}: `{slot_config['function_key']}`")
+        for slot_key, slot_config in sorted(pending["function_config"].items()):
+            st.markdown(f"{slot_key}: `{slot_config['function_key']}`")
             if slot_config["function_params"]:
                 params_line = ", ".join(f"{name}={value}" for name, value in slot_config["function_params"].items())
                 st.markdown(f"*params*: {params_line}")
             else:
                 st.markdown("*params*: `{}`")
 
-    result = get_tau_grid(
+    result = compute(
         algo_key,
         gamma_spec,
         n_spec,
@@ -353,7 +363,7 @@ def render_results_phase(algo_key: str, spec):
         st.session_state["ui_phase"] = "config"
         st.rerun()
 
-    cached = get_tau_grid(
+    result = compute(
         algo_key,
         settings["gamma_spec"],
         settings["n_spec"],
@@ -363,12 +373,12 @@ def render_results_phase(algo_key: str, spec):
         show_progress=False,
         rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
     )
-    if cached is None:
+    if result is None:
         st.session_state["pending_settings"] = settings
         st.session_state["ui_phase"] = "loading"
         st.rerun()
 
-    gamma_values, n_values, tau_grid, cached_warnings, duals_grid = cached
+    gamma_values, n_values, tau_grid, cached_warnings, duals_grid = result
     gamma_spec = settings["gamma_spec"]
     n_spec = settings["n_spec"]
 
@@ -387,9 +397,8 @@ def render_results_phase(algo_key: str, spec):
         st.markdown("**Steps**")
         st.code(_steps_source(spec), language="python")
         st.markdown("**Functions**")
-        for slot in spec.function_slots:
-            slot_config = settings["function_config"][slot.key]
-            st.markdown(f"{slot.label}: `{slot_config['function_key']}`")
+        for slot_key, slot_config in sorted(settings["function_config"].items()):
+            st.markdown(f"{slot_key}: `{slot_config['function_key']}`")
             if slot_config["function_params"]:
                 params_line = ", ".join(f"{name}={value}" for name, value in slot_config["function_params"].items())
                 st.markdown(f"*params*: {params_line}")
