@@ -60,6 +60,22 @@
   border: 1px solid #ff4d0078;
   background: #ff4d0078;
 }
+.dual-overlay-button {
+  border: 1px solid #ff8a00;
+  background: #fff2e0;
+  color: #8a3d00;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.dual-overlay-button:hover {
+  background: #ffe1c2;
+}
+.dual-overlay-button.is-active {
+  background: #ff8a00;
+  color: #fff;
+}
 .dual-toggle-button {
   border: 1px solid #111;
   background: #fff;
@@ -134,6 +150,22 @@
   min-height: {{PLOT_HEIGHT}}px;
   width: 100%;
   height: 100%;
+}
+.dual-overlay-input {
+  display: none;
+  border: 1px solid rgba(49, 51, 63, 0.2);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.dual-overlay-input.is-error {
+  border-color: #cb0000;
+  background: #fff1f1;
+}
+.dual-wrapper.dual-show-overlay .dual-overlay-input {
+  display: block;
 }
 .dual-button {
   border: none;

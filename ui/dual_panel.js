@@ -2,11 +2,23 @@ const selected = new Map();
 const listEl = document.getElementById('dual-selected-list');
 const clearBtn = document.getElementById('dual-clear');
 const plotBtn = document.getElementById('dual-plot');
+const overlayBtn = document.getElementById('dual-overlay');
+const wrapperEl = document.querySelector('.dual-wrapper');
 const toggleBtn = document.getElementById('dual-toggle-zero');
 const removeGammaBtn = document.getElementById('dual-remove-gamma');
 const removeNBtn = document.getElementById('dual-remove-n');
 let hideZero = true;
 const selectedPlotCards = { gamma: new Set(), n: new Set() };
+const overlayState = new Map();
+const overlayDebounce = new Map();
+const overlayExamples = [
+  '1/log(x)',
+  'sin(x)',
+  '2*x^2 + 3',
+  'log(x)',
+  'sqrt(x)',
+  'exp(-x)',
+];
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (c) => {
@@ -43,6 +55,28 @@ function updateRemoveButtons() {
   const display = hasSelection ? 'inline-flex' : 'none';
   removeGammaBtn.style.display = display;
   removeNBtn.style.display = display;
+}
+
+function updateOverlayButtonVisibility(show) {
+  if (!overlayBtn) {
+    return;
+  }
+  overlayBtn.style.display = show ? 'inline-flex' : 'none';
+  if (!show && wrapperEl) {
+    wrapperEl.classList.remove('dual-show-overlay');
+    overlayBtn.classList.remove('is-active');
+  }
+}
+
+function randomOverlayPlaceholder() {
+  const example = overlayExamples[Math.floor(Math.random() * overlayExamples.length)];
+  return `example: ${example}`;
+}
+
+function refreshOverlayPlaceholders() {
+  document.querySelectorAll('.dual-overlay-input').forEach((input) => {
+    input.setAttribute('placeholder', randomOverlayPlaceholder());
+  });
 }
 
 function togglePlotCardSelection(card, set) {
@@ -164,6 +198,17 @@ function ensurePlotly(callback) {
   document.head.appendChild(script);
 }
 
+function ensureMath(callback) {
+  if (window.math) {
+    callback();
+    return;
+  }
+  const script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/npm/mathjs@12.4.2/lib/browser/math.js';
+  script.onload = callback;
+  document.head.appendChild(script);
+}
+
 function sanitizeId(value) {
   return value.replace(/[^a-zA-Z0-9_-]/g, '-');
 }
@@ -173,7 +218,96 @@ function clearPlots() {
   document.getElementById('dual-plot-n').innerHTML = '';
   selectedPlotCards.gamma.clear();
   selectedPlotCards.n.clear();
+  overlayState.clear();
+  updateOverlayButtonVisibility(false);
   updateRemoveButtons();
+}
+
+function normalizeExpression(raw) {
+  if (!raw) {
+    return '';
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed.replace(/^y\s*=\s*/i, '');
+}
+
+function buildOverlayYValues(expr, xValues) {
+  const compiled = window.math.compile(expr);
+  return xValues.map((x) => {
+    if (!Number.isFinite(x)) {
+      return null;
+    }
+    try {
+      const value = compiled.evaluate({ x });
+      const numeric = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(numeric) ? numeric : null;
+    } catch (err) {
+      return null;
+    }
+  });
+}
+
+function updateOverlayTrace(plotId, xValues, yValues, expr) {
+  const plotDiv = document.getElementById(plotId);
+  if (!plotDiv || !window.Plotly) {
+    return;
+  }
+  const state = overlayState.get(plotId);
+  if (!expr) {
+    if (state) {
+      Plotly.deleteTraces(plotDiv, [state.traceIndex]);
+      overlayState.delete(plotId);
+    }
+    return;
+  }
+  const traceName = `Overlay: ${expr}`;
+  if (state && plotDiv.data && plotDiv.data[state.traceIndex]) {
+    Plotly.restyle(plotDiv, { x: [xValues], y: [yValues], name: [traceName] }, [state.traceIndex]);
+    return;
+  }
+  const traceIndex = plotDiv.data ? plotDiv.data.length : 0;
+  const trace = {
+    x: xValues,
+    y: yValues,
+    mode: 'lines',
+    name: traceName,
+    showlegend: false,
+    line: { color: '#ff8a00', width: 2 },
+  };
+  Plotly.addTraces(plotDiv, trace).then(() => {
+    overlayState.set(plotId, { traceIndex });
+  });
+}
+
+function handleOverlayInput(event) {
+  const input = event.target;
+  if (!input || !window.math) {
+    return;
+  }
+  const seriesId = input.getAttribute('data-series-id');
+  const axis = input.getAttribute('data-axis');
+  const plotId = input.getAttribute('data-plot-id');
+  const series = seriesData[seriesId];
+  if (!series || !axis || !plotId) {
+    return;
+  }
+  const rawExpr = normalizeExpression(input.value);
+  if (!rawExpr) {
+    input.classList.remove('is-error');
+    updateOverlayTrace(plotId, [], [], '');
+    return;
+  }
+  try {
+    const xValues = axis === 'gamma' ? series.gamma_values : series.n_values;
+    const yValues = buildOverlayYValues(rawExpr, xValues);
+    updateOverlayTrace(plotId, xValues, yValues, rawExpr);
+    input.classList.remove('is-error');
+  } catch (err) {
+    input.classList.add('is-error');
+  }
 }
 
 function plotSelected() {
@@ -184,12 +318,15 @@ function plotSelected() {
   nGrid.innerHTML = '';
   selectedPlotCards.gamma.clear();
   selectedPlotCards.n.clear();
+  overlayState.clear();
   updateRemoveButtons();
   if (!seriesIds.length) {
     gammaGrid.textContent = 'Select dual values to plot.';
     nGrid.textContent = 'Select dual values to plot.';
+    updateOverlayButtonVisibility(false);
     return;
   }
+  updateOverlayButtonVisibility(true);
   const grouped = new Map();
   seriesIds.forEach((seriesId) => {
     const series = seriesData[seriesId];
@@ -237,6 +374,7 @@ function plotSelected() {
       gammaCard.innerHTML = `
         <div class="dual-plot-card-title">${escapeHtml(series.label)}</div>
         <div id="gamma-${safeKey}" class="dual-plot-chart"></div>
+        <input class="dual-overlay-input" type="text" placeholder="example: 1/log(x)" data-series-id="${escapeHtml(seriesId)}" data-axis="gamma" data-plot-id="gamma-${safeKey}">
       `;
       gammaConstraintGrid.appendChild(gammaCard);
       gammaCard.addEventListener('click', () => togglePlotCardSelection(gammaCard, selectedPlotCards.gamma));
@@ -247,6 +385,7 @@ function plotSelected() {
       nCard.innerHTML = `
         <div class="dual-plot-card-title">${escapeHtml(series.label)}</div>
         <div id="n-${safeKey}" class="dual-plot-chart"></div>
+        <input class="dual-overlay-input" type="text" placeholder="example: 1/log(x)" data-series-id="${escapeHtml(seriesId)}" data-axis="n" data-plot-id="n-${safeKey}">
       `;
       nConstraintGrid.appendChild(nCard);
       nCard.addEventListener('click', () => togglePlotCardSelection(nCard, selectedPlotCards.n));
@@ -257,6 +396,7 @@ function plotSelected() {
         y: series.gamma_dual,
         mode: gammaCount <= 1 ? 'markers' : 'lines',
         name: series.label,
+        showlegend: false,
       }], {
         autosize: true,
         xaxis: { title: '', tickfont: { size: 9 } },
@@ -270,18 +410,53 @@ function plotSelected() {
         y: series.n_dual,
         mode: nCount <= 1 ? 'markers' : 'lines',
         name: series.label,
+        showlegend: false,
       }], {
         autosize: true,
         xaxis: { title: '', tickfont: { size: 9 } },
         yaxis: { title: '', tickfont: { size: 9 } },
         margin: { t: 10, l: 30, r: 10, b: 15 },
       }, { displayModeBar: false, responsive: true });
+
+      const gammaInput = gammaCard.querySelector('.dual-overlay-input');
+      const nInput = nCard.querySelector('.dual-overlay-input');
+      [gammaInput, nInput].forEach((input) => {
+        if (!input) {
+          return;
+        }
+        input.addEventListener('focus', () => {
+          input.setAttribute('placeholder', '');
+        });
+        input.addEventListener('click', (event) => {
+          event.stopPropagation();
+        });
+        input.addEventListener('input', (event) => {
+          const key = input.getAttribute('data-plot-id');
+          if (overlayDebounce.has(key)) {
+            clearTimeout(overlayDebounce.get(key));
+          }
+          overlayDebounce.set(key, setTimeout(() => {
+            ensureMath(() => handleOverlayInput(event));
+          }, 250));
+        });
+      });
     });
   });
 }
 
 plotBtn.addEventListener('click', () => {
   ensurePlotly(plotSelected);
+});
+
+overlayBtn.addEventListener('click', () => {
+  ensureMath(() => {
+    refreshOverlayPlaceholders();
+    if (!wrapperEl) {
+      return;
+    }
+    wrapperEl.classList.toggle('dual-show-overlay');
+    overlayBtn.classList.toggle('is-active', wrapperEl.classList.contains('dual-show-overlay'));
+  });
 });
 
 removeGammaBtn.addEventListener('click', () => {
