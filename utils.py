@@ -371,38 +371,56 @@ def format_dual_value(value: float | None) -> str:
     return f"{value:.6g}"
 
 
-def dual_fluctuations_by_slice(
+def dual_ranking_by_slice(
     slice_duals: list[dict],
     *,
     metric: str = "std",
 ) -> dict:
+    include_none = metric.endswith("_with_none")
+    base_metric = metric.replace("_with_none", "", 1) if include_none else metric
     dual_values: dict = {}
-    for point_duals in slice_duals:
-        for constraint, values in point_duals.items():
-            for dual_key, dual_value in values.items():
+    if include_none:
+        keys: set[tuple[str, str]] = set()
+        for point_duals in slice_duals:
+            for constraint, values in point_duals.items():
+                for dual_key in values.keys():
+                    keys.add((constraint, dual_key))
+        for constraint, dual_key in keys:
+            values: list[float] = []
+            for point_duals in slice_duals:
+                dual_value = point_duals.get(constraint, {}).get(dual_key, 0.0)
                 if dual_value is None or not np.isfinite(dual_value):
-                    continue
-                dual_values.setdefault(constraint, {}).setdefault(dual_key, []).append(float(dual_value))
-    fluctuations: dict = {}
+                    dual_value = 0.0
+                values.append(float(dual_value))
+            dual_values.setdefault(constraint, {})[dual_key] = values
+    else:
+        for point_duals in slice_duals:
+            for constraint, values in point_duals.items():
+                for dual_key, dual_value in values.items():
+                    if dual_value is None or not np.isfinite(dual_value):
+                        continue
+                    dual_values.setdefault(constraint, {}).setdefault(dual_key, []).append(float(dual_value))
+    ranking: dict = {}
     for constraint, key_values in dual_values.items():
-        fluct_map: dict = {}
+        ranking_map: dict = {}
         for dual_key, values in key_values.items():
             arr = np.asarray(values, dtype=float)
             if arr.size == 0:
                 continue
-            if metric == "std":
-                fluct_map[dual_key] = float(np.std(arr))
-            elif metric == "normalized_std_rms":
-                rms = float(np.sqrt(np.mean(arr**2)))
-                if rms <= 0:
-                    fluct_map[dual_key] = 0.0
-                else:
-                    fluct_map[dual_key] = float(np.std(arr) / rms)
+            if base_metric == "std":
+                ranking_map[dual_key] = float(np.std(arr))
+            elif base_metric == "non_zero_pct":
+                non_zero = float(np.sum(np.abs(arr) > 1e-12))
+                ranking_map[dual_key] = 100.0 * non_zero / float(arr.size)
+            elif base_metric == "median_abs":
+                ranking_map[dual_key] = float(np.median(np.abs(arr)))
+            elif base_metric == "mean_abs":
+                ranking_map[dual_key] = float(np.mean(np.abs(arr)))
             else:
                 raise NotImplementedError
-        if fluct_map:
-            fluctuations[constraint] = fluct_map
-    return fluctuations
+        if ranking_map:
+            ranking[constraint] = ranking_map
+    return ranking
 
 
 def build_dual_series_data(
@@ -490,24 +508,31 @@ def build_dual_section_html(
     section_id: str,
     section_key: str,
     title: str,
-    dual_fluctuations: dict,
+    dual_ranking: dict,
     current_duals: dict,
     min_width: int,
 ) -> tuple[str, int]:
-    if not dual_fluctuations:
+    if not dual_ranking:
         return f"<div class='dual-section-title'>{html_escape(title)}</div><div>No data.</div>", 0
 
     section_html = [f"<div class='dual-section-title'>{html_escape(title)}</div>"]
     total_buttons = 0
-    for constraint, fluct_map in sorted(dual_fluctuations.items()):
-        if not fluct_map:
+    for constraint, ranking_map in sorted(dual_ranking.items()):
+        if not ranking_map:
             continue
-        max_fluct = max(fluct_map.values()) if fluct_map else 0.0
-        max_fluct = max(max_fluct, 1e-12)
-        section_html.append(f"<div class='dual-constraint-title'>{html_escape(constraint)}</div>")
-        section_html.append("<div class='dual-grid'>")
-        for dual_key, fluct in sorted(fluct_map.items(), key=lambda item: item[1], reverse=True):
-            color = jet_color(fluct / max_fluct)
+        max_ranking = max(ranking_map.values()) if ranking_map else 0.0
+        max_ranking = max(max_ranking, 1e-12)
+        section_html.append(
+            f"<div class='dual-constraint-title' data-constraint='{html_escape(constraint)}'>"
+            f"{html_escape(constraint)}</div>"
+        )
+        section_html.append(
+            "<div class='dual-grid' "
+            f"data-constraint='{html_escape(constraint)}' "
+            f"data-section='{html_escape(section_key)}'>"
+        )
+        for dual_key, ranking in sorted(ranking_map.items(), key=lambda item: item[1], reverse=True):
+            color = jet_color(ranking / max_ranking)
             text_color = text_color_for_bg(color)
             value = current_duals.get(constraint, {}).get(dual_key)
             label = f"{constraint} | {dual_key}"
@@ -517,7 +542,7 @@ def build_dual_section_html(
                 f"<button class='dual-button' data-id='{html_escape(data_id)}' "
                 f"data-series-id='{html_escape(series_id)}' "
                 f"data-section='{html_escape(section_key)}' "
-                f"data-fluct='{html_escape(fluct)}' "
+                f"data-ranking='{html_escape(ranking)}' "
                 f"data-label='{html_escape(label)}' data-value='{html_escape(format_dual_value(value))}' "
                 f"style='background:{html_escape(color)};color:{html_escape(text_color)}'>"
                 f"{html_escape(dual_key)}</button>"

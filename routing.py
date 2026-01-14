@@ -23,7 +23,7 @@ from utils import (
     build_dual_series_data,
     build_dual_section_html,
     clamp_value,
-    dual_fluctuations_by_slice,
+    dual_ranking_by_slice,
     compute,
     value_index,
 )
@@ -552,12 +552,31 @@ def render_dual_values_panel(
     if not duals_grid:
         st.caption("No dual values available for these settings.")
         return
+    metric_labels = {
+        "non_zero_pct": "Non-zero %",
+        "non_zero_pct_with_none": "Non-zero % (None=0)",
+        "std": "Std dev",
+        "std_with_none": "Std dev (None=0)",
+        "median_abs": "Median |x|",
+        "median_abs_with_none": "Median |x| (None=0)",
+        "mean_abs": "Average |x|",
+        "mean_abs_with_none": "Average |x| (None=0)",
+    }
+    metric_col, _ = st.columns([1, 5])
+    with metric_col:
+        metric = st.selectbox(
+            "Ranking metric",
+            list(metric_labels.keys()),
+            format_func=lambda key: metric_labels.get(key, key),
+            index=list(metric_labels.keys()).index("non_zero_pct_with_none"),
+            key=f"dual-ranking-metric-{algo_key}",
+        )
 
     current_duals = duals_grid[gamma_idx][n_idx] if duals_grid else {}
     gamma_slice = [row[n_idx] for row in duals_grid]
     n_slice = list(duals_grid[gamma_idx])
-    gamma_fluctuations = dual_fluctuations_by_slice(gamma_slice)
-    n_fluctuations = dual_fluctuations_by_slice(n_slice)
+    gamma_ranking = dual_ranking_by_slice(gamma_slice, metric=metric)
+    n_ranking = dual_ranking_by_slice(n_slice, metric=metric)
     series_data = build_dual_series_data(
         duals_grid,
         gamma_values,
@@ -567,21 +586,21 @@ def render_dual_values_panel(
     )
     series_json = json.dumps(series_data).replace("</", "<\\/")
 
-    gamma_fluct_title = f"Fluctuation vs gamma (n = {n_values[n_idx]})"
-    n_fluct_title = f"Fluctuation vs n (gamma = {gamma_values[gamma_idx]})"
+    gamma_ranking_title = f"Ranking vs gamma (n = {n_values[n_idx]})"
+    n_ranking_title = f"Ranking vs n (gamma = {gamma_values[gamma_idx]})"
     gamma_html, gamma_count = build_dual_section_html(
         section_id=f"{algo_key}-gamma",
         section_key="gamma",
-        title=gamma_fluct_title,
-        dual_fluctuations=gamma_fluctuations,
+        title=gamma_ranking_title,
+        dual_ranking=gamma_ranking,
         current_duals=current_duals,
         min_width=DUAL_BUTTON_MIN_WIDTH,
     )
     n_html, n_count = build_dual_section_html(
         section_id=f"{algo_key}-n",
         section_key="n",
-        title=n_fluct_title,
-        dual_fluctuations=n_fluctuations,
+        title=n_ranking_title,
+        dual_ranking=n_ranking,
         current_duals=current_duals,
         min_width=DUAL_BUTTON_MIN_WIDTH,
     )
