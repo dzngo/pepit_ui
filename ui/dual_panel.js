@@ -235,19 +235,30 @@ function normalizeExpression(raw) {
 }
 
 function buildOverlayYValues(expr, xValues) {
-  const compiled = window.math.compile(expr);
-  return xValues.map((x) => {
+  let compiled;
+  try {
+    compiled = window.math.compile(expr);
+  } catch (err) {
+    return { yValues: xValues.map(() => null), hasError: true };
+  }
+  let hasValid = false;
+  const yValues = xValues.map((x) => {
     if (!Number.isFinite(x)) {
       return null;
     }
     try {
       const value = compiled.evaluate({ x });
       const numeric = typeof value === 'number' ? value : Number(value);
-      return Number.isFinite(numeric) ? numeric : null;
+      if (Number.isFinite(numeric)) {
+        hasValid = true;
+        return numeric;
+      }
+      return null;
     } catch (err) {
       return null;
     }
   });
+  return { yValues, hasError: !hasValid };
 }
 
 function updateOverlayTrace(plotId, xValues, yValues, expr) {
@@ -302,9 +313,9 @@ function handleOverlayInput(event) {
   }
   try {
     const xValues = axis === 'gamma' ? series.gamma_values : series.n_values;
-    const yValues = buildOverlayYValues(rawExpr, xValues);
-    updateOverlayTrace(plotId, xValues, yValues, rawExpr);
-    input.classList.remove('is-error');
+    const result = buildOverlayYValues(rawExpr, xValues);
+    updateOverlayTrace(plotId, xValues, result.yValues, rawExpr);
+    input.classList.toggle('is-error', result.hasError);
   } catch (err) {
     input.classList.add('is-error');
   }
