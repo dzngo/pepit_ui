@@ -3,11 +3,13 @@ import html
 from math import isfinite
 import pickle
 import time
+import random
 from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
 import streamlit as st
+import sympy as sp
 
 from algorithms_registry import (
     DEFAULT_HYPERPARAMETERS,
@@ -591,4 +593,40 @@ def _parse_float_list(raw: str) -> tuple[list[float], str | None]:
             values.append(float(part.strip()))
         except ValueError:
             return [], f"Invalid list value: {part.strip()!r}"
+    return values, None
+
+
+_PATTERN_EXAMPLES = (
+    "1/log(x)",
+    "sin(x)",
+    "2*x^2 + 3",
+    "log(x)",
+    "sqrt(x)",
+    "exp(-x)",
+)
+
+
+def _random_pattern_example() -> str:
+    return f"example: {random.choice(_PATTERN_EXAMPLES)}"
+
+
+def _evaluate_pattern_expression(expression: str, x_values: np.ndarray) -> tuple[np.ndarray | None, str | None]:
+    if not expression:
+        return None, None
+    cleaned = expression.strip()
+    if not cleaned:
+        return None, None
+    try:
+        parsed = sp.sympify(cleaned)
+    except (sp.SympifyError, TypeError, ValueError) as err:
+        return None, f"Invalid expression: {err}"
+    if parsed.free_symbols - {sp.symbols("x")}:
+        return None, "Expression must use x only."
+    try:
+        fn = sp.lambdify(sp.symbols("x"), parsed, "numpy")
+        values = np.asarray(fn(x_values), dtype=float)
+    except Exception:
+        return None, "Expression could not be evaluated for the current axis values."
+    if not np.any(np.isfinite(values)):
+        return values, "Expression did not produce finite values."
     return values, None

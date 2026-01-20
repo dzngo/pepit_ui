@@ -17,9 +17,11 @@ from algorithms_registry import (
 from utils import (
     BASE_GAMMA_SPEC,
     BASE_N_SPEC,
+    _evaluate_pattern_expression,
     _float_text_default,
     _parse_float_input,
     _parse_float_list,
+    _random_pattern_example,
     build_dual_series_data,
     build_dual_section_html,
     clamp_value,
@@ -413,8 +415,17 @@ def render_results_phase(algo_key: str, spec):
     st.session_state[gamma_slider_key] = clamp_value(float(st.session_state[gamma_slider_key]), gamma_spec)
     st.session_state[n_slider_key] = clamp_value(float(st.session_state[n_slider_key]), n_spec)
     col1, col2 = st.columns(2)
+
+    pattern_gamma_key = f"tau_pattern_gamma_{algo_key}"
+    pattern_n_key = f"tau_pattern_n_{algo_key}"
+    st.session_state.setdefault(pattern_gamma_key, "")
+    st.session_state.setdefault(pattern_n_key, "")
+    gamma_overlay_values = None
+    n_overlay_values = None
+
     with col1:
         with st.container(border=True):
+            # gamma slider
             gamma_value = st.slider(
                 "gamma",
                 float(gamma_spec.min_value),
@@ -422,8 +433,19 @@ def render_results_phase(algo_key: str, spec):
                 step=float(gamma_spec.step),
                 key=gamma_slider_key,
             )
+
+            # tau vs gamma hypothesis
+            gamma_pattern = st.text_input(
+                "pattern hypothesis",
+                key=pattern_gamma_key,
+                placeholder=_random_pattern_example(),
+            )
+            gamma_overlay_values, gamma_error = _evaluate_pattern_expression(gamma_pattern, gamma_values)
+            if gamma_error:
+                st.error(gamma_error)
     with col2:
         with st.container(border=True):
+            # n slider
             if n_spec.value_type == "int":
                 st.session_state[n_slider_key] = int(round(st.session_state[n_slider_key]))
                 n_value_raw = st.slider(
@@ -443,6 +465,16 @@ def render_results_phase(algo_key: str, spec):
                     key=n_slider_key,
                 )
 
+            # tau vs n hypothesis
+            n_pattern = st.text_input(
+                "pattern hypothesis",
+                key=pattern_n_key,
+                placeholder=_random_pattern_example(),
+            )
+            n_overlay_values, n_error = _evaluate_pattern_expression(n_pattern, n_values)
+            if n_error:
+                st.error(n_error)
+
     gamma_idx = value_index(float(gamma_value), gamma_spec)
     n_idx = value_index(float(n_value), n_spec)
     tau_gamma = tau_grid[:, n_idx]
@@ -459,6 +491,17 @@ def render_results_phase(algo_key: str, spec):
             hovertemplate="gamma=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>",
         )
     )
+    if gamma_overlay_values is not None and not gamma_error:
+        gamma_fig.add_trace(
+            go.Scatter(
+                x=gamma_values,
+                y=gamma_overlay_values,
+                mode="lines",
+                line={"color": "#ff8a00", "width": 2},
+                hovertemplate="gamma=%{x:.3f}<br>pattern=%{y:.3e}<extra></extra>",
+                showlegend=False,
+            )
+        )
     if current_tau is not None and np.isfinite(current_tau):
         gamma_fig.add_trace(
             go.Scatter(
@@ -472,9 +515,11 @@ def render_results_phase(algo_key: str, spec):
         )
     gamma_fig.update_layout(
         showlegend=False,
-        title="Tau vs gamma",
+        title={"text": "Tau vs gamma", "pad": {"t": 6, "b": 0}},
         xaxis_title="gamma",
         yaxis_title="tau",
+        height=320,
+        margin={"t": 30, "l": 50, "r": 20, "b": 10},
     )
 
     n_fig = go.Figure()
@@ -486,6 +531,17 @@ def render_results_phase(algo_key: str, spec):
             hovertemplate="n=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>",
         )
     )
+    if n_overlay_values is not None and not n_error:
+        n_fig.add_trace(
+            go.Scatter(
+                x=n_values,
+                y=n_overlay_values,
+                mode="lines",
+                line={"color": "#ff8a00", "width": 2},
+                hovertemplate="n=%{x:.3f}<br>pattern=%{y:.3e}<extra></extra>",
+                showlegend=False,
+            )
+        )
     if current_tau is not None and np.isfinite(current_tau):
         n_fig.add_trace(
             go.Scatter(
@@ -498,9 +554,11 @@ def render_results_phase(algo_key: str, spec):
         )
     n_fig.update_layout(
         showlegend=False,
-        title="Tau vs n",
+        title={"text": "Tau vs n", "pad": {"t": 6, "b": 0}},
         xaxis_title="n",
         yaxis_title="tau",
+        height=320,
+        margin={"t": 30, "l": 50, "r": 20, "b": 10},
     )
 
     with col1:
