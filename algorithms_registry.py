@@ -246,29 +246,35 @@ FUNCTIONS: Dict[str, FunctionSpec] = {
 def gradient_descent_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     func = funcs["f"]
     xs = func.stationary_point()
+    xs.set_name("x_*")
     fs = func(xs)
     x0 = problem.set_initial_point()
     x = x0
+    x.set_name("x_0")
     steps = int(params["n"])
     gamma = float(params["gamma"])
-    for _ in range(steps):
+    for i in range(steps):
         x = x - gamma * func.gradient(x)
+        x.set_name(f"x_{i+1}")
     return {"x0": x0, "x": x, "xs": xs, "fs": fs, "funcs": funcs, "func": func}
 
 
 def subgradient_method_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     func = funcs["f"]
     xs = func.stationary_point()
+    xs.set_name("x_*")
     fs = func(xs)
     x0 = problem.set_initial_point()
     x = x0
+    x.set_name("x_0")
     gx, fx = func.oracle(x)
     steps = int(params["n"])
     gamma = float(params["gamma"])
-    for _ in range(steps):
+    for i in range(steps):
         problem.set_performance_metric(fx - fs)
         x = x - gamma * gx
         gx, fx = func.oracle(x)
+        x.set_name(f"x_{i+1}")
     return {"x0": x0, "x": x, "xs": xs, "fs": fs, "fx": fx, "funcs": funcs, "func": func}
 
 
@@ -277,32 +283,39 @@ def proximal_gradient_steps(problem: PEP, funcs: Dict[str, Function], params: Di
     f2 = funcs["f2"]
     func = f1 + f2
     xs = func.stationary_point()
+    xs.set_name("x_*")
     x0 = problem.set_initial_point()
     x = x0
+    x.set_name("x_0")
     steps = int(params["n"])
     gamma = float(params["gamma"])
-    for _ in range(steps):
+    for i in range(steps):
         y = x - gamma * f1.gradient(x)
         x, _, _ = proximal_step(y, f2, gamma)
+        x.set_name(f"x_{i+1}")
     return {"x0": x0, "x": x, "xs": xs, "funcs": funcs, "func": func, "f1": f1, "f2": f2}
 
 
 def accelerated_proximal_point_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     func = funcs["f"]
     xs = func.stationary_point()
+    xs.set_name("x_*")
     fs = func(xs)
     x0 = problem.set_initial_point()
     x = x0
+    x.set_name("x_0")
     y = x0
     lam = 1
     steps = int(params["n"])
     gamma = float(params["gamma"])
-    for _ in range(steps):
+    for i in range(steps):
         lam_old = lam
         lam = (1 + sqrt(4 * lam_old**2 + 1)) / 2
         x_old = x
         x = y - gamma * func.gradient(y)
         y = x + (lam_old - 1) / lam * (x - x_old)
+        x.set_name(f"x_{i+1}")
+        y.set_name(f"y_{i+1}")
     return {"x0": x0, "x": x, "xs": xs, "fs": fs, "funcs": funcs, "func": func}
 
 

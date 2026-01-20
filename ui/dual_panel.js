@@ -26,13 +26,74 @@ function escapeHtml(value) {
   });
 }
 
+function formatSubscriptText(text) {
+  if (!text) {
+    return '';
+  }
+  const value = String(text);
+  let out = '';
+  let i = 0;
+  while (i < value.length) {
+    const ch = value[i];
+    if (ch !== '_') {
+      out += escapeHtml(ch);
+      i += 1;
+      continue;
+    }
+    if (i + 1 >= value.length) {
+      out += escapeHtml(ch);
+      i += 1;
+      continue;
+    }
+    if (value[i + 1] === '{') {
+      const end = value.indexOf('}', i + 2);
+      if (end === -1) {
+        out += escapeHtml(value.slice(i));
+        break;
+      }
+      const subText = value.slice(i + 2, end);
+      out += `<sub>${escapeHtml(subText)}</sub>`;
+      i = end + 1;
+      continue;
+    }
+    let end = i + 1;
+    while (end < value.length && /[a-zA-Z0-9*]/.test(value[end])) {
+      end += 1;
+    }
+    if (end === i + 1) {
+      out += `<sub>${escapeHtml(value[i + 1])}</sub>`;
+      i += 2;
+      continue;
+    }
+    const subText = value.slice(i + 1, end);
+    out += `<sub>${escapeHtml(subText)}</sub>`;
+    i = end;
+  }
+  return out;
+}
+
+function formatDualLabel(text) {
+  if (!text) {
+    return '';
+  }
+  const value = String(text);
+  const separator = ' | ';
+  const splitIndex = value.indexOf(separator);
+  if (splitIndex !== -1) {
+    const left = value.slice(0, splitIndex);
+    const right = value.slice(splitIndex + separator.length);
+    return `${escapeHtml(left)}${separator}${formatSubscriptText(right)}`;
+  }
+  return formatSubscriptText(value);
+}
+
 function updateList() {
   if (!selected.size) {
     listEl.textContent = 'None';
     return;
   }
   const items = Array.from(selected.values());
-  listEl.innerHTML = items.map((txt) => `<span class="dual-badge">${escapeHtml(txt)}</span>`).join('');
+  listEl.innerHTML = items.map((txt) => `<span class="dual-badge">${formatDualLabel(txt)}</span>`).join('');
 }
 
 function visibleButtons() {
@@ -383,7 +444,7 @@ function plotSelected() {
       gammaCard.className = 'dual-plot-card';
       gammaCard.setAttribute('data-series-id', seriesId);
       gammaCard.innerHTML = `
-        <div class="dual-plot-card-title">${escapeHtml(series.label)}</div>
+        <div class="dual-plot-card-title">${formatDualLabel(series.label)}</div>
         <div id="gamma-${safeKey}" class="dual-plot-chart"></div>
         <input class="dual-overlay-input" type="text" placeholder="example: 1/log(x)" data-series-id="${escapeHtml(seriesId)}" data-axis="gamma" data-plot-id="gamma-${safeKey}">
       `;
@@ -394,7 +455,7 @@ function plotSelected() {
       nCard.className = 'dual-plot-card';
       nCard.setAttribute('data-series-id', seriesId);
       nCard.innerHTML = `
-        <div class="dual-plot-card-title">${escapeHtml(series.label)}</div>
+        <div class="dual-plot-card-title">${formatDualLabel(series.label)}</div>
         <div id="n-${safeKey}" class="dual-plot-chart"></div>
         <input class="dual-overlay-input" type="text" placeholder="example: 1/log(x)" data-series-id="${escapeHtml(seriesId)}" data-axis="n" data-plot-id="n-${safeKey}">
       `;

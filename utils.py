@@ -540,6 +540,7 @@ def build_dual_section_html(
             label = f"{constraint} | {dual_key}"
             data_id = f"{section_id}::{constraint}::{dual_key}"
             series_id = _dual_series_id(constraint, dual_key)
+            button_label = _format_dual_key_label(dual_key)
             section_html.append(
                 f"<button class='dual-button' data-id='{html_escape(data_id)}' "
                 f"data-series-id='{html_escape(series_id)}' "
@@ -547,11 +548,46 @@ def build_dual_section_html(
                 f"data-ranking='{html_escape(ranking)}' "
                 f"data-label='{html_escape(label)}' data-value='{html_escape(format_dual_value(value))}' "
                 f"style='background:{html_escape(color)};color:{html_escape(text_color)}'>"
-                f"{html_escape(dual_key)}</button>"
+                f"{button_label}</button>"
             )
             total_buttons += 1
         section_html.append("</div>")
     return "".join(section_html), total_buttons
+
+
+def _format_dual_key_label(text: str) -> str:
+    if not text:
+        return ""
+    return _subscript_to_html(text.strip())
+
+
+def _subscript_to_html(text: str) -> str:
+    parts: list[str] = []
+    i = 0
+    length = len(text)
+    while i < length:
+        ch = text[i]
+        if ch != "_":
+            parts.append(html_escape(ch))
+            i += 1
+            continue
+        if i + 1 >= length:
+            parts.append(html_escape(ch))
+            i += 1
+            continue
+        start = i + 1
+        end = start
+        while end < length and (text[end].isalnum() or text[end] == "*"):
+            end += 1
+        if end == start:
+            sub_text = text[i + 1]
+            parts.append(f"<sub>{html_escape(sub_text)}</sub>")
+            i += 2
+            continue
+        sub_text = text[start:end]
+        parts.append(f"<sub>{html_escape(sub_text)}</sub>")
+        i = end
+    return "".join(parts)
 
 
 def _float_default(param_default: object | None) -> float:
