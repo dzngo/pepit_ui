@@ -15,6 +15,7 @@ def main():
     init_session_state()
     st.title("Interactive PEPit explorer")
     st.set_page_config(page_title="PEPit UI", page_icon="🔢", layout="wide")
+    st.divider()
 
     if "pending_algorithm_select" in st.session_state:
         st.session_state["algorithm_select"] = st.session_state.pop("pending_algorithm_select")

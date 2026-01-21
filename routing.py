@@ -138,7 +138,13 @@ def _render_steps_editor(
             st.session_state[code_key] = updated
         st.text_input("Custom algorithm name", key=name_key)
         col1, col2, col3 = st.columns(3)
-        if col1.button("Save", key=f"customize-save-{context}-{algo_key}"):
+        with col1:
+            save_clicked = st.button("Save", key="btn-save-config")
+        with col2:
+            test_clicked = st.button("Test", key="btn-test-config")
+        with col3:
+            cancel_clicked = st.button("Cancel", key="btn-cancel-config")
+        if save_clicked:
             name = str(st.session_state.get(name_key, "")).strip()
             steps_code = st.session_state.get(code_key, "")
             base_algo = get_base_algorithm_name(spec.name)
@@ -159,10 +165,10 @@ def _render_steps_editor(
                 st.session_state["selected_algorithm"] = None
                 st.session_state["ui_phase"] = "config"
                 st.rerun()
-        if col3.button("Cancel", key=f"customize-cancel-{context}-{algo_key}"):
+        if cancel_clicked:
             st.session_state[open_key] = False
             st.rerun()
-        if test_context and col2.button("Test", key=f"customize-test-{context}-{algo_key}"):
+        if test_context and test_clicked:
             if test_context["function_param_errors"]:
                 st.error("; ".join(test_context["function_param_errors"]))
             else:
@@ -193,7 +199,7 @@ def _render_steps_editor(
                     st.success("Test succeeded.")
     else:
         st.code(_steps_source(spec), language="python")
-        if st.button("Customize", key=f"customize-open-btn-{context}-{algo_key}"):
+        if st.button("Customize", key="btn-customize-config"):
             st.session_state[open_key] = True
             st.session_state.setdefault(code_key, _editor_steps_source(spec))
             st.session_state.setdefault(name_key, "")
@@ -201,6 +207,9 @@ def _render_steps_editor(
 
 
 def render_config_phase(algo_key: str, spec: AlgorithmSpec):
+    css_path = Path(__file__).resolve().parent / "ui" / "config_panel.css"
+    if css_path.exists():
+        st.markdown(f"<style>{css_path.read_text()}</style>", unsafe_allow_html=True)
     st.subheader("Configuration")
 
     sections = st.columns(2)
@@ -390,7 +399,8 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                     options=custom_names,
                     key="remove-custom-algorithm",
                 )
-                if st.button("Remove"):
+                remove_clicked = st.button("Remove", key="btn-remove-config")
+                if remove_clicked:
                     try:
                         remove_custom_algorithm(selected_custom)
                     except Exception as exc:
@@ -404,7 +414,8 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
 
     st.checkbox("Rerun Nan caches", key="rerun_nan_caches")
 
-    if st.button("Plot"):
+    plot_clicked = st.button("Plot", key="btn-plot-config")
+    if plot_clicked:
         errors = []
         if gamma_settings["max"] <= gamma_settings["min"]:
             errors.append("gamma max must be greater than gamma min.")
