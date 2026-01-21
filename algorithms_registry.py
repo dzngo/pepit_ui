@@ -587,3 +587,14 @@ def register_custom_algorithm(
     _save_custom_algorithms(CUSTOM_ALGORITHMS)
     ALGORITHMS[name] = spec
     return spec
+
+
+def remove_custom_algorithm(name: str) -> None:
+    if name in BASE_ALGORITHMS:
+        raise ValueError(f"Cannot remove base algorithm '{name}'.")
+    if name not in CUSTOM_ALGORITHMS:
+        raise ValueError(f"Custom algorithm '{name}' not found.")
+    CUSTOM_ALGORITHMS.pop(name, None)
+    CUSTOM_SPECS.pop(name, None)
+    ALGORITHMS.pop(name, None)
+    _save_custom_algorithms(CUSTOM_ALGORITHMS)

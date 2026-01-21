@@ -16,10 +16,14 @@ def main():
     st.title("Interactive PEPit explorer")
     st.set_page_config(page_title="PEPit UI", page_icon="🔢", layout="wide")
 
+    if "pending_algorithm_select" in st.session_state:
+        st.session_state["algorithm_select"] = st.session_state.pop("pending_algorithm_select")
+
     algorithm_key = st.selectbox(
         "Algorithm",
         options=list(ALGORITHMS.keys()),
         format_func=lambda key: ALGORITHMS[key].name,
+        key="algorithm_select",
     )
     spec = ALGORITHMS[algorithm_key]
 

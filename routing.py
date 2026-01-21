@@ -11,6 +11,7 @@ from streamlit_ace import st_ace
 from algorithms_registry import (
     AlgorithmSpec,
     HyperparameterSpec,
+    ALGORITHMS,
     FUNCTIONS,
     INITIAL_CONDITIONS,
     PERFORMANCE_METRICS,
@@ -18,6 +19,8 @@ from algorithms_registry import (
     get_algorithm_steps_code,
     get_base_algorithm_name,
     register_custom_algorithm,
+    remove_custom_algorithm,
+    CUSTOM_ALGORITHMS,
     run_algorithm,
 )
 from utils import (
@@ -152,11 +155,14 @@ def _render_steps_editor(
             else:
                 st.success(f"Saved custom algorithm '{name}'.")
                 st.session_state[open_key] = False
+                st.session_state["pending_algorithm_select"] = name
+                st.session_state["selected_algorithm"] = None
+                st.session_state["ui_phase"] = "config"
                 st.rerun()
-        if col2.button("Cancel", key=f"customize-cancel-{context}-{algo_key}"):
+        if col3.button("Cancel", key=f"customize-cancel-{context}-{algo_key}"):
             st.session_state[open_key] = False
             st.rerun()
-        if test_context and col3.button("Test", key=f"customize-test-{context}-{algo_key}"):
+        if test_context and col2.button("Test", key=f"customize-test-{context}-{algo_key}"):
             if test_context["function_param_errors"]:
                 st.error("; ".join(test_context["function_param_errors"]))
             else:
@@ -197,178 +203,204 @@ def _render_steps_editor(
 def render_config_phase(algo_key: str, spec: AlgorithmSpec):
     st.subheader("Configuration")
 
-    with st.container(border=True):
-        st.write("Set gamma/n ranges.")
+    sections = st.columns(2)
+    with sections[0]:
+        with st.container(border=True):
+            st.write("Set gamma/n ranges")
 
-        range_store = st.session_state["range_store"]
-        algo_ranges = range_store.setdefault(algo_key, {})
-        gamma_settings = render_range_inputs("gamma", BASE_GAMMA_SPEC, algo_ranges.get("gamma", {}))
-        n_settings = render_range_inputs("n", BASE_N_SPEC, algo_ranges.get("n", {}))
-        algo_ranges["gamma"] = gamma_settings
-        algo_ranges["n"] = n_settings
+            range_store = st.session_state["range_store"]
+            algo_ranges = range_store.setdefault(algo_key, {})
+            gamma_settings = render_range_inputs("gamma", BASE_GAMMA_SPEC, algo_ranges.get("gamma", {}))
+            n_settings = render_range_inputs("n", BASE_N_SPEC, algo_ranges.get("n", {}))
+            algo_ranges["gamma"] = gamma_settings
+            algo_ranges["n"] = n_settings
 
-    with st.container(border=True):
-        st.write("Functions")
-        function_store = st.session_state["function_store"]
-        function_params_store = st.session_state["function_params_store"]
-        algo_functions = function_store.setdefault(algo_key, {})
-        algo_function_params = function_params_store.setdefault(algo_key, {})
-        function_param_errors: list[str] = []
-        for slot in spec.function_slots:
-            default_function = spec.default_function_keys.get(slot.key)
-            selected_function = algo_functions.get(slot.key, default_function)
-            function_names = sorted(FUNCTIONS.keys())
-            if selected_function not in function_names:
-                selected_function = function_names[0]
-            selected_function = st.selectbox(
-                f"{slot.key} function",
-                options=function_names,
-                index=function_names.index(selected_function) if selected_function in function_names else 0,
-                key=f"function-{algo_key}-{slot.key}",
-            )
-            algo_functions[slot.key] = selected_function
+        with st.container(border=True):
+            st.write("Functions")
+            function_store = st.session_state["function_store"]
+            function_params_store = st.session_state["function_params_store"]
+            algo_functions = function_store.setdefault(algo_key, {})
+            algo_function_params = function_params_store.setdefault(algo_key, {})
+            function_param_errors: list[str] = []
+            for slot in spec.function_slots:
+                default_function = spec.default_function_keys.get(slot.key)
+                selected_function = algo_functions.get(slot.key, default_function)
+                function_names = sorted(FUNCTIONS.keys())
+                if selected_function not in function_names:
+                    selected_function = function_names[0]
+                selected_function = st.selectbox(
+                    f"{slot.key} function",
+                    options=function_names,
+                    index=function_names.index(selected_function) if selected_function in function_names else 0,
+                    key=f"function-{algo_key}-{slot.key}",
+                )
+                algo_functions[slot.key] = selected_function
 
-            function_spec = FUNCTIONS[selected_function]
-            slot_params = algo_function_params.setdefault(
-                slot.key,
-                {param.name: param.default for param in function_spec.parameters},
-            )
-            if not function_spec.parameters:
-                st.caption(f"{slot.key} has no required parameters.")
-            else:
-                columns = st.columns(3)
-                for idx, param in enumerate(function_spec.parameters):
-                    with columns[idx % 3]:
-                        with st.container(border=True):
-                            input_key = f"function-param-{algo_key}-{slot.key}-{param.name}"
-                            param_context = f"{slot.key} ({function_spec.cls.__name__}), parameter {param.name}"
-                            if param.param_type == "float":
-                                default_text = _float_text_default(slot_params.get(param.name, param.default))
-                                st.session_state.setdefault(input_key, default_text)
-                                raw_value = st.text_input(param.name, key=input_key)
-                                parsed_value, error = _parse_float_input(raw_value)
-                                if error:
-                                    function_param_errors.append(f"{param_context}: {error}")
-                                else:
-                                    if param.required and parsed_value is None:
-                                        function_param_errors.append(f"{param_context}: value required.")
-                                    elif parsed_value is not None and parsed_value < 0:
-                                        function_param_errors.append(f"{param_context}: value must be >= 0.")
+                function_spec = FUNCTIONS[selected_function]
+                slot_params = algo_function_params.setdefault(
+                    slot.key,
+                    {param.name: param.default for param in function_spec.parameters},
+                )
+                if not function_spec.parameters:
+                    st.caption(f"{slot.key} has no required parameters.")
+                else:
+                    columns = st.columns(3)
+                    for idx, param in enumerate(function_spec.parameters):
+                        with columns[idx % 3]:
+                            with st.container(border=True):
+                                input_key = f"function-param-{algo_key}-{slot.key}-{param.name}"
+                                param_context = f"{slot.key} ({function_spec.cls.__name__}), parameter {param.name}"
+                                if param.param_type == "float":
+                                    default_text = _float_text_default(slot_params.get(param.name, param.default))
+                                    st.session_state.setdefault(input_key, default_text)
+                                    raw_value = st.text_input(param.name, key=input_key)
+                                    parsed_value, error = _parse_float_input(raw_value)
+                                    if error:
+                                        function_param_errors.append(f"{param_context}: {error}")
                                     else:
-                                        slot_params[param.name] = parsed_value
-                                if param.description:
-                                    st.caption(param.description)
-                            elif param.param_type == "BlockPartition":
-                                d_value = st.number_input(
-                                    f"{param.name} (d)",
-                                    min_value=0,
-                                    step=1,
-                                    value=int(slot_params.get(param.name, 1) or 1),
-                                    key=input_key,
-                                )
-                                slot_params[param.name] = int(d_value)
-                                desc_parts = []
-                                if param.description:
-                                    desc_parts.append(param.description)
-                                desc_parts.append(
-                                    "Partition will be created via `problem.declare_block_partition(d=...)`."
-                                )
-                                st.caption(" ".join(desc_parts))
-                            elif param.param_type == "Point":
-                                checked = st.checkbox(
-                                    param.name,
-                                    value=bool(slot_params.get(param.name, False)),
-                                    key=input_key,
-                                )
-                                slot_params[param.name] = bool(checked)
-                                desc_parts = []
-                                if param.description:
-                                    desc_parts.append(param.description)
-                                desc_parts.append("When checked, a Point is created and passed as `center`.")
-                                st.caption(" ".join(desc_parts))
-                            elif param.param_type == "list":
-                                desc = param.description
-                                if desc:
-                                    desc += " "
-                                desc += "Enter list values separated by ','"
-                                existing = slot_params.get(param.name, param.default)
-                                if isinstance(existing, list):
-                                    default_text = ", ".join(str(value) for value in existing)
-                                else:
-                                    default_text = ""
-                                raw_value = st.text_input(
-                                    param.name,
-                                    value=st.session_state.get(input_key, default_text),
-                                    key=input_key,
-                                )
-                                parsed_list, error = _parse_float_list(raw_value)
-                                if error:
-                                    function_param_errors.append(f"{param_context}: {error}")
-                                else:
-                                    if param.required and not parsed_list:
-                                        function_param_errors.append(f"{param_context}: value required.")
+                                        if param.required and parsed_value is None:
+                                            function_param_errors.append(f"{param_context}: value required.")
+                                        elif parsed_value is not None and parsed_value < 0:
+                                            function_param_errors.append(f"{param_context}: value must be >= 0.")
+                                        else:
+                                            slot_params[param.name] = parsed_value
+                                    if param.description:
+                                        st.caption(param.description)
+                                elif param.param_type == "BlockPartition":
+                                    d_value = st.number_input(
+                                        f"{param.name} (d)",
+                                        min_value=0,
+                                        step=1,
+                                        value=int(slot_params.get(param.name, 1) or 1),
+                                        key=input_key,
+                                    )
+                                    slot_params[param.name] = int(d_value)
+                                    desc_parts = []
+                                    if param.description:
+                                        desc_parts.append(param.description)
+                                    desc_parts.append(
+                                        "Partition will be created via `problem.declare_block_partition(d=...)`."
+                                    )
+                                    st.caption(" ".join(desc_parts))
+                                elif param.param_type == "Point":
+                                    checked = st.checkbox(
+                                        param.name,
+                                        value=bool(slot_params.get(param.name, False)),
+                                        key=input_key,
+                                    )
+                                    slot_params[param.name] = bool(checked)
+                                    desc_parts = []
+                                    if param.description:
+                                        desc_parts.append(param.description)
+                                    desc_parts.append("When checked, a Point is created and passed as `center`.")
+                                    st.caption(" ".join(desc_parts))
+                                elif param.param_type == "list":
+                                    desc = param.description
+                                    if desc:
+                                        desc += " "
+                                    desc += "Enter list values separated by ','"
+                                    existing = slot_params.get(param.name, param.default)
+                                    if isinstance(existing, list):
+                                        default_text = ", ".join(str(value) for value in existing)
                                     else:
-                                        slot_params[param.name] = parsed_list
-                                st.caption(desc)
-                            else:
-                                raw_value = st.text_input(
-                                    param.name,
-                                    value=str(slot_params.get(param.name, param.default) or ""),
-                                    key=input_key,
-                                )
-                                slot_params[param.name] = raw_value
-                stale_params = set(slot_params) - {p.name for p in function_spec.parameters}
-                for key in stale_params:
-                    slot_params.pop(key, None)
+                                        default_text = ""
+                                    raw_value = st.text_input(
+                                        param.name,
+                                        value=st.session_state.get(input_key, default_text),
+                                        key=input_key,
+                                    )
+                                    parsed_list, error = _parse_float_list(raw_value)
+                                    if error:
+                                        function_param_errors.append(f"{param_context}: {error}")
+                                    else:
+                                        if param.required and not parsed_list:
+                                            function_param_errors.append(f"{param_context}: value required.")
+                                        else:
+                                            slot_params[param.name] = parsed_list
+                                    st.caption(desc)
+                                else:
+                                    raw_value = st.text_input(
+                                        param.name,
+                                        value=str(slot_params.get(param.name, param.default) or ""),
+                                        key=input_key,
+                                    )
+                                    slot_params[param.name] = raw_value
+                    stale_params = set(slot_params) - {p.name for p in function_spec.parameters}
+                    for key in stale_params:
+                        slot_params.pop(key, None)
 
-    with st.container(border=True):
-        st.write("Initial condition and performance metric")
-        ic_store = st.session_state["initial_condition_store"]
-        pm_store = st.session_state["performance_metric_store"]
-        ic_options = list(INITIAL_CONDITIONS.keys())
-        pm_options = list(PERFORMANCE_METRICS.keys())
-        ic_default = ic_store.get(algo_key, spec.default_initial_condition)
-        pm_default = pm_store.get(algo_key, spec.default_performance_metric)
-        ic_selection = st.selectbox(
-            "Initial condition",
-            options=ic_options,
-            format_func=lambda key: INITIAL_CONDITIONS[key].label,
-            index=ic_options.index(ic_default) if ic_default in ic_options else 0,
-            key=f"ic-{algo_key}",
-        )
-        pm_selection = st.selectbox(
-            "Performance metric",
-            options=pm_options,
-            format_func=lambda key: PERFORMANCE_METRICS[key].label,
-            index=pm_options.index(pm_default) if pm_default in pm_options else 0,
-            key=f"pm-{algo_key}",
-        )
-        ic_store[algo_key] = ic_selection
-        pm_store[algo_key] = pm_selection
-
-    with st.expander("Algorithm details"):
-        function_config = {
-            slot.key: {
-                "function_key": st.session_state["function_store"][algo_key][slot.key],
-                "function_params": dict(st.session_state["function_params_store"][algo_key][slot.key]),
+        with st.container(border=True):
+            st.write("Initial condition and performance metric")
+            ic_store = st.session_state["initial_condition_store"]
+            pm_store = st.session_state["performance_metric_store"]
+            ic_options = list(INITIAL_CONDITIONS.keys())
+            pm_options = list(PERFORMANCE_METRICS.keys())
+            ic_default = ic_store.get(algo_key, spec.default_initial_condition)
+            pm_default = pm_store.get(algo_key, spec.default_performance_metric)
+            ic_selection = st.selectbox(
+                "Initial condition",
+                options=ic_options,
+                format_func=lambda key: INITIAL_CONDITIONS[key].label,
+                index=ic_options.index(ic_default) if ic_default in ic_options else 0,
+                key=f"ic-{algo_key}",
+            )
+            pm_selection = st.selectbox(
+                "Performance metric",
+                options=pm_options,
+                format_func=lambda key: PERFORMANCE_METRICS[key].label,
+                index=pm_options.index(pm_default) if pm_default in pm_options else 0,
+                key=f"pm-{algo_key}",
+            )
+            ic_store[algo_key] = ic_selection
+            pm_store[algo_key] = pm_selection
+    with sections[1]:
+        with st.container(border=True):
+            st.write("Algorithm")
+            function_config = {
+                slot.key: {
+                    "function_key": st.session_state["function_store"][algo_key][slot.key],
+                    "function_params": dict(st.session_state["function_params_store"][algo_key][slot.key]),
+                }
+                for slot in spec.function_slots
             }
-            for slot in spec.function_slots
-        }
-        ic_key = st.session_state["initial_condition_store"][algo_key]
-        pm_key = st.session_state["performance_metric_store"][algo_key]
-        _render_steps_editor(
-            algo_key=algo_key,
-            spec=spec,
-            context="config",
-            test_context={
-                "function_config": function_config,
-                "function_param_errors": list(function_param_errors),
-                "initial_condition_key": ic_key,
-                "performance_metric_key": pm_key,
-                "gamma_min": gamma_settings["min"],
-                "n_min": n_settings["min"],
-            },
-        )
+            ic_key = st.session_state["initial_condition_store"][algo_key]
+            pm_key = st.session_state["performance_metric_store"][algo_key]
+            _render_steps_editor(
+                algo_key=algo_key,
+                spec=spec,
+                context="config",
+                test_context={
+                    "function_config": function_config,
+                    "function_param_errors": list(function_param_errors),
+                    "initial_condition_key": ic_key,
+                    "performance_metric_key": pm_key,
+                    "gamma_min": gamma_settings["min"],
+                    "n_min": n_settings["min"],
+                },
+            )
+
+        with st.container(border=True):
+            st.write("Remove customized algorithm")
+            custom_names = sorted(CUSTOM_ALGORITHMS.keys())
+            if not custom_names:
+                st.caption("No customized algorithms saved.")
+            else:
+                selected_custom = st.selectbox(
+                    "Custom algorithms",
+                    options=custom_names,
+                    key="remove-custom-algorithm",
+                )
+                if st.button("Remove"):
+                    try:
+                        remove_custom_algorithm(selected_custom)
+                    except Exception as exc:
+                        st.error(str(exc))
+                    else:
+                        st.success(f"Removed '{selected_custom}'.")
+                        if st.session_state.get("selected_algorithm") == selected_custom:
+                            st.session_state["selected_algorithm"] = None
+                            st.session_state["pending_algorithm_select"] = next(iter(ALGORITHMS.keys()), None)
+                        st.rerun()
 
     st.checkbox("Rerun Nan caches", key="rerun_nan_caches")
 
