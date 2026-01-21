@@ -1,11 +1,12 @@
 # routing.py
 import json
-import inspect
+import re
 from pathlib import Path
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
+from streamlit_ace import st_ace
 
 from algorithms_registry import (
     AlgorithmSpec,
@@ -13,6 +14,11 @@ from algorithms_registry import (
     FUNCTIONS,
     INITIAL_CONDITIONS,
     PERFORMANCE_METRICS,
+    compile_steps_for_test,
+    get_algorithm_steps_code,
+    get_base_algorithm_name,
+    register_custom_algorithm,
+    run_algorithm,
 )
 from utils import (
     BASE_GAMMA_SPEC,
@@ -92,17 +98,105 @@ def render_range_inputs(label: str, base: HyperparameterSpec, stored: dict) -> d
 
 
 def _steps_source(spec: AlgorithmSpec) -> str:
-    try:
-        return inspect.getsource(spec.steps)
-    except OSError:
-        return spec.steps.__name__
+    return get_algorithm_steps_code(spec.name)
+
+
+def _editor_steps_source(spec: AlgorithmSpec) -> str:
+    code = _steps_source(spec)
+    pattern = r"^def\s+\w+\s*\("
+    if re.search(pattern, code, flags=re.MULTILINE):
+        return re.sub(pattern, "def customized_steps(", code, count=1, flags=re.MULTILINE)
+    return code
+
+
+def _render_steps_editor(
+    *,
+    algo_key: str,
+    spec: AlgorithmSpec,
+    context: str,
+    test_context: dict | None = None,
+) -> None:
+    open_key = f"customize-open-{context}-{algo_key}"
+    code_key = f"customize-code-{context}-{algo_key}"
+    name_key = f"customize-name-{context}-{algo_key}"
+    editor_key = f"customize-editor-{context}-{algo_key}"
+
+    if st.session_state.get(open_key, False):
+        st.session_state.setdefault(code_key, _editor_steps_source(spec))
+        updated = st_ace(
+            value=st.session_state.get(code_key, ""),
+            language="python",
+            key=editor_key,
+            height=320,
+            show_gutter=True,
+            wrap=True,
+        )
+        if isinstance(updated, str):
+            st.session_state[code_key] = updated
+        st.text_input("Custom algorithm name", key=name_key)
+        col1, col2, col3 = st.columns(3)
+        if col1.button("Save", key=f"customize-save-{context}-{algo_key}"):
+            name = str(st.session_state.get(name_key, "")).strip()
+            steps_code = st.session_state.get(code_key, "")
+            base_algo = get_base_algorithm_name(spec.name)
+            try:
+                if not name:
+                    raise ValueError("Custom algorithm name is required.")
+                register_custom_algorithm(
+                    name=name,
+                    steps_code=str(steps_code),
+                    base_algo=base_algo,
+                )
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                st.success(f"Saved custom algorithm '{name}'.")
+                st.session_state[open_key] = False
+                st.rerun()
+        if col2.button("Cancel", key=f"customize-cancel-{context}-{algo_key}"):
+            st.session_state[open_key] = False
+            st.rerun()
+        if test_context and col3.button("Test", key=f"customize-test-{context}-{algo_key}"):
+            if test_context["function_param_errors"]:
+                st.error("; ".join(test_context["function_param_errors"]))
+            else:
+                try:
+                    steps_code = st.session_state.get(code_key, "")
+                    steps = compile_steps_for_test(steps_code)
+                    temp_spec = AlgorithmSpec(
+                        name=spec.name,
+                        steps=steps,
+                        function_slots=list(spec.function_slots),
+                        default_function_keys=dict(spec.default_function_keys),
+                        default_initial_condition=spec.default_initial_condition,
+                        default_performance_metric=spec.default_performance_metric,
+                    )
+                    run_algorithm(
+                        algo_spec=temp_spec,
+                        function_config=test_context["function_config"],
+                        initial_condition_key=test_context["initial_condition_key"],
+                        performance_metric_key=test_context["performance_metric_key"],
+                        algo_params={
+                            "gamma": float(test_context["gamma_min"]),
+                            "n": float(test_context["n_min"]),
+                        },
+                    )
+                except Exception as exc:
+                    st.error(f"Test failed: {exc}")
+                else:
+                    st.success("Test succeeded.")
+    else:
+        st.code(_steps_source(spec), language="python")
+        if st.button("Customize", key=f"customize-open-btn-{context}-{algo_key}"):
+            st.session_state[open_key] = True
+            st.session_state.setdefault(code_key, _editor_steps_source(spec))
+            st.session_state.setdefault(name_key, "")
+            st.rerun()
 
 
 def render_config_phase(algo_key: str, spec: AlgorithmSpec):
-    with st.expander("Algorithm details"):
-        st.code(_steps_source(spec), language="python")
-
     st.subheader("Configuration")
+
     with st.container(border=True):
         st.write("Set gamma/n ranges.")
 
@@ -147,18 +241,19 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                     with columns[idx % 3]:
                         with st.container(border=True):
                             input_key = f"function-param-{algo_key}-{slot.key}-{param.name}"
+                            param_context = f"{slot.key} ({function_spec.cls.__name__}), parameter {param.name}"
                             if param.param_type == "float":
                                 default_text = _float_text_default(slot_params.get(param.name, param.default))
                                 st.session_state.setdefault(input_key, default_text)
                                 raw_value = st.text_input(param.name, key=input_key)
                                 parsed_value, error = _parse_float_input(raw_value)
                                 if error:
-                                    function_param_errors.append(f"{slot.key} {param.name}: {error}")
+                                    function_param_errors.append(f"{param_context}: {error}")
                                 else:
                                     if param.required and parsed_value is None:
-                                        function_param_errors.append(f"{slot.key} {param.name}: value required.")
+                                        function_param_errors.append(f"{param_context}: value required.")
                                     elif parsed_value is not None and parsed_value < 0:
-                                        function_param_errors.append(f"{slot.key} {param.name}: value must be >= 0.")
+                                        function_param_errors.append(f"{param_context}: value must be >= 0.")
                                     else:
                                         slot_params[param.name] = parsed_value
                                 if param.description:
@@ -208,10 +303,10 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                                 )
                                 parsed_list, error = _parse_float_list(raw_value)
                                 if error:
-                                    function_param_errors.append(f"{slot.key} {param.name}: {error}")
+                                    function_param_errors.append(f"{param_context}: {error}")
                                 else:
                                     if param.required and not parsed_list:
-                                        function_param_errors.append(f"{slot.key} {param.name}: value required.")
+                                        function_param_errors.append(f"{param_context}: value required.")
                                     else:
                                         slot_params[param.name] = parsed_list
                                 st.caption(desc)
@@ -250,6 +345,30 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
         )
         ic_store[algo_key] = ic_selection
         pm_store[algo_key] = pm_selection
+
+    with st.expander("Algorithm details"):
+        function_config = {
+            slot.key: {
+                "function_key": st.session_state["function_store"][algo_key][slot.key],
+                "function_params": dict(st.session_state["function_params_store"][algo_key][slot.key]),
+            }
+            for slot in spec.function_slots
+        }
+        ic_key = st.session_state["initial_condition_store"][algo_key]
+        pm_key = st.session_state["performance_metric_store"][algo_key]
+        _render_steps_editor(
+            algo_key=algo_key,
+            spec=spec,
+            context="config",
+            test_context={
+                "function_config": function_config,
+                "function_param_errors": list(function_param_errors),
+                "initial_condition_key": ic_key,
+                "performance_metric_key": pm_key,
+                "gamma_min": gamma_settings["min"],
+                "n_min": n_settings["min"],
+            },
+        )
 
     st.checkbox("Rerun Nan caches", key="rerun_nan_caches")
 

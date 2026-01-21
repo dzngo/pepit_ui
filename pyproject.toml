@@ -9,5 +9,6 @@ dependencies = [
     "pepit>=0.4.0",
     "plotly>=6.5.0",
     "streamlit>=1.52.2",
+    "streamlit-ace>=0.1.1",
     "sympy>=1.13.0",
 ]

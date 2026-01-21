@@ -1,6 +1,9 @@
 # functions_registry.py
 from dataclasses import dataclass, field
 import inspect
+import json
+from pathlib import Path
+from datetime import datetime, timezone
 from math import isfinite
 from math import sqrt
 from typing import Callable, Dict, List, Tuple
@@ -8,6 +11,7 @@ from typing import Callable, Dict, List, Tuple
 from PEPit import PEP, Point
 from PEPit.function import Function
 import PEPit.functions as functions
+import numpy as np
 
 from PEPit.primitive_steps import proximal_step
 
@@ -89,6 +93,9 @@ class AlgorithmSpec:
     default_function_keys: Dict[str, str]
     default_initial_condition: str
     default_performance_metric: str
+
+
+CUSTOM_ALGORITHMS_PATH = Path(__file__).resolve().parent / "custom_algorithms.json"
 
 
 DEFAULT_HYPERPARAMETERS: List[HyperparameterSpec] = [
@@ -423,7 +430,7 @@ def run_algorithm(
     return float(tau), duals
 
 
-ALGORITHMS: Dict[str, AlgorithmSpec] = {
+BASE_ALGORITHMS: Dict[str, AlgorithmSpec] = {
     "gradient_descent": AlgorithmSpec(
         name="gradient_descent",
         steps=gradient_descent_steps,
@@ -457,3 +464,126 @@ ALGORITHMS: Dict[str, AlgorithmSpec] = {
         default_performance_metric="function_gap",
     ),
 }
+
+
+def _compile_steps(steps_code: str) -> Callable[[PEP, Dict[str, object], Dict[str, float]], dict]:
+    namespace: dict[str, object] = {
+        "PEP": PEP,
+        "Point": Point,
+        "proximal_step": proximal_step,
+        "sqrt": sqrt,
+        "np": np,
+        "Dict": Dict,
+        "Function": Function,
+    }
+    exec(steps_code, namespace)
+    steps = namespace.get("customized_steps")
+    if not callable(steps):
+        raise ValueError("Custom steps code must define a callable named 'customized_steps'.")
+    return steps
+
+
+def compile_steps_for_test(steps_code: str) -> Callable[[PEP, Dict[str, object], Dict[str, float]], dict]:
+    return _compile_steps(steps_code)
+
+
+def _load_custom_algorithms() -> Dict[str, dict]:
+    if not CUSTOM_ALGORITHMS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(CUSTOM_ALGORITHMS_PATH.read_text())
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _save_custom_algorithms(payload: Dict[str, dict]) -> None:
+    CUSTOM_ALGORITHMS_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _custom_spec_from_payload(name: str, payload: dict) -> AlgorithmSpec | None:
+    base_name = payload.get("base_algo")
+    steps_code = payload.get("steps_code")
+    if not isinstance(base_name, str) or not isinstance(steps_code, str):
+        return None
+    base_spec = BASE_ALGORITHMS.get(base_name)
+    if base_spec is None:
+        return None
+    steps = _compile_steps(steps_code)
+    return AlgorithmSpec(
+        name=name,
+        steps=steps,
+        function_slots=list(base_spec.function_slots),
+        default_function_keys=dict(base_spec.default_function_keys),
+        default_initial_condition=base_spec.default_initial_condition,
+        default_performance_metric=base_spec.default_performance_metric,
+    )
+
+
+CUSTOM_ALGORITHMS: Dict[str, dict] = _load_custom_algorithms()
+CUSTOM_SPECS: Dict[str, AlgorithmSpec] = {}
+for algo_name, payload in CUSTOM_ALGORITHMS.items():
+    try:
+        custom_spec = _custom_spec_from_payload(algo_name, payload)
+    except Exception:
+        custom_spec = None
+    if custom_spec is not None:
+        CUSTOM_SPECS[algo_name] = custom_spec
+
+ALGORITHMS: Dict[str, AlgorithmSpec] = {
+    **BASE_ALGORITHMS,
+    **CUSTOM_SPECS,
+}
+
+
+def get_algorithm_steps_code(name: str) -> str:
+    payload = CUSTOM_ALGORITHMS.get(name)
+    if payload and isinstance(payload, dict):
+        steps_code = payload.get("steps_code")
+        if isinstance(steps_code, str):
+            return steps_code
+    try:
+        return inspect.getsource(ALGORITHMS[name].steps)
+    except OSError:
+        return ALGORITHMS[name].steps.__name__
+
+
+def get_base_algorithm_name(name: str) -> str:
+    payload = CUSTOM_ALGORITHMS.get(name)
+    if payload and isinstance(payload, dict):
+        base_name = payload.get("base_algo")
+        if isinstance(base_name, str):
+            return base_name
+    return name
+
+
+def register_custom_algorithm(
+    *,
+    name: str,
+    steps_code: str,
+    base_algo: str,
+) -> AlgorithmSpec:
+    if name in ALGORITHMS:
+        raise ValueError(f"Algorithm name '{name}' already exists.")
+    base_spec = BASE_ALGORITHMS.get(base_algo)
+    if base_spec is None:
+        raise ValueError(f"Base algorithm '{base_algo}' not found.")
+    steps = _compile_steps(steps_code)
+    spec = AlgorithmSpec(
+        name=name,
+        steps=steps,
+        function_slots=list(base_spec.function_slots),
+        default_function_keys=dict(base_spec.default_function_keys),
+        default_initial_condition=base_spec.default_initial_condition,
+        default_performance_metric=base_spec.default_performance_metric,
+    )
+    CUSTOM_ALGORITHMS[name] = {
+        "steps_code": steps_code,
+        "base_algo": base_algo,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _save_custom_algorithms(CUSTOM_ALGORITHMS)
+    ALGORITHMS[name] = spec
+    return spec

@@ -67,7 +67,13 @@ def _round_value(value: float, *, digits: int = 12) -> float:
 
 
 def _normalize_params(params: Dict[str, float]) -> Tuple[Tuple[str, float], ...]:
-    return tuple(sorted((name, _round_value(value)) for name, value in params.items()))
+    return tuple(
+        sorted(
+            (name, _round_value(value))
+            for name, value in params.items()
+            if value is not None
+        )
+    )
 
 
 def _quantize_value(value: float, spec: HyperparameterSpec) -> float:
@@ -159,29 +165,6 @@ def make_cache_key(
         initial_condition_key,
         performance_metric_key,
     )
-
-
-def clear_grid_cache_entry(
-    algo_key: str,
-    gamma_spec: HyperparameterSpec,
-    n_spec: HyperparameterSpec,
-    function_config: Dict[str, Dict[str, float]],
-    initial_condition_key: str,
-    performance_metric_key: str,
-) -> None:
-    cache = st.session_state.get("tau_grid_cache")
-    if cache is not None:
-        cache.pop(
-            make_cache_key(
-                algo_key,
-                gamma_spec,
-                n_spec,
-                function_config,
-                initial_condition_key,
-                performance_metric_key,
-            ),
-            None,
-        )
 
 
 def compute(
