@@ -130,6 +130,10 @@ six==1.17.0
 smmap==5.0.2
     # via gitdb
 streamlit==1.52.2
+    # via
+    #   pepit-ui (./pyproject.toml)
+    #   streamlit-ace
+streamlit-ace==0.1.1
     # via pepit-ui (./pyproject.toml)
 sympy==1.14.0
     # via pepit-ui (./pyproject.toml)
