@@ -33,6 +33,7 @@ from utils import (
     _random_pattern_example,
     build_dual_series_data,
     build_dual_section_html,
+    clear_algorithm_caches,
     clamp_value,
     dual_ranking_by_slice,
     compute,
@@ -402,6 +403,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                 remove_clicked = st.button("Remove", key="btn-remove-config")
                 if remove_clicked:
                     try:
+                        clear_algorithm_caches(selected_custom)
                         remove_custom_algorithm(selected_custom)
                     except Exception as exc:
                         st.error(str(exc))

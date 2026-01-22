@@ -303,6 +303,21 @@ def compute(
     return grid_cache[key]
 
 
+def clear_algorithm_caches(algo_key: str) -> None:
+    grid_cache = st.session_state.get("tau_grid_cache")
+    if isinstance(grid_cache, dict):
+        keys_to_remove = [key for key in grid_cache.keys() if key and key[0] == algo_key]
+        for key in keys_to_remove:
+            grid_cache.pop(key, None)
+
+    point_cache = _load_point_cache()
+    if isinstance(point_cache, dict):
+        point_keys = [key for key in point_cache.keys() if key and key[0] == algo_key]
+        for key in point_keys:
+            point_cache.pop(key, None)
+        _save_point_cache(point_cache)
+
+
 def value_index(value: float, spec: HyperparameterSpec) -> int:
     idx = int(round((value - spec.min_value) / spec.step))
     total = int(round((spec.max_value - spec.min_value) / spec.step))
