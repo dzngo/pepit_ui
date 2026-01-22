@@ -15,7 +15,7 @@ from algorithms_registry import (
     FUNCTIONS,
     INITIAL_CONDITIONS,
     PERFORMANCE_METRICS,
-    compile_steps_for_test,
+    _compile_steps,
     get_algorithm_steps_code,
     get_base_algorithm_name,
     register_custom_algorithm,
@@ -126,14 +126,15 @@ def _render_steps_editor(
     editor_key = f"customize-editor-{context}-{algo_key}"
 
     if st.session_state.get(open_key, False):
-        st.session_state.setdefault(code_key, _editor_steps_source(spec))
+        st.session_state[code_key] = _editor_steps_source(spec)
         updated = st_ace(
             value=st.session_state.get(code_key, ""),
             language="python",
             key=editor_key,
             height=320,
-            show_gutter=True,
-            wrap=True,
+            show_gutter=False,
+            wrap=False,
+            theme="github",
         )
         if isinstance(updated, str):
             st.session_state[code_key] = updated
@@ -175,7 +176,7 @@ def _render_steps_editor(
             else:
                 try:
                     steps_code = st.session_state.get(code_key, "")
-                    steps = compile_steps_for_test(steps_code)
+                    steps = _compile_steps(steps_code)
                     temp_spec = AlgorithmSpec(
                         name=spec.name,
                         steps=steps,

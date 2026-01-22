@@ -483,10 +483,6 @@ def _compile_steps(steps_code: str) -> Callable[[PEP, Dict[str, object], Dict[st
     return steps
 
 
-def compile_steps_for_test(steps_code: str) -> Callable[[PEP, Dict[str, object], Dict[str, float]], dict]:
-    return _compile_steps(steps_code)
-
-
 def _load_custom_algorithms() -> Dict[str, dict]:
     if not CUSTOM_ALGORITHMS_PATH.exists():
         return {}
