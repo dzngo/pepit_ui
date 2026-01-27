@@ -1,18 +1,17 @@
 # functions_registry.py
-from dataclasses import dataclass, field
 import inspect
 import json
 import re
-from pathlib import Path
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from math import isfinite, sqrt
+from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
+import numpy as np
+import PEPit.functions as functions
 from PEPit import PEP, Point
 from PEPit.function import Function
-import PEPit.functions as functions
-import numpy as np
-
 from PEPit.primitive_steps import proximal_step
 
 
