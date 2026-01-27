@@ -66,8 +66,29 @@ def _round_value(value: float, *, digits: int = 12) -> float:
     return float(round(float(value), digits))
 
 
-def _normalize_params(params: Dict[str, float]) -> Tuple[Tuple[str, float], ...]:
-    return tuple(sorted((name, _round_value(value)) for name, value in params.items() if value is not None))
+def _normalize_param_value(value: object) -> object:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        return _round_value(float(value))
+    if isinstance(value, np.ndarray):
+        return tuple(_normalize_param_value(item) for item in value.tolist())
+    if isinstance(value, (list, tuple, set)):
+        return tuple(_normalize_param_value(item) for item in value)
+    if isinstance(value, dict):
+        return tuple((key, _normalize_param_value(val)) for key, val in sorted(value.items()))
+    return value
+
+
+def _normalize_params(params: Dict[str, object]) -> Tuple[Tuple[str, object], ...]:
+    normalized = []
+    for name, value in params.items():
+        if value is None:
+            continue
+        normalized.append((name, _normalize_param_value(value)))
+    return tuple(sorted(normalized, key=lambda item: item[0]))
 
 
 def _quantize_value(value: float, spec: HyperparameterSpec) -> float:
@@ -106,7 +127,7 @@ def _save_point_cache(cache: Dict[Tuple, Tuple[float, str | None, Dict[str, Dict
         return
 
 
-def _normalize_function_config(function_config: Dict[str, Dict[str, float]]) -> Tuple:
+def _normalize_function_config(function_config: Dict[str, Dict[str, object]]) -> Tuple:
     normalized = []
     for slot_key, config in sorted(function_config.items()):
         function_key = config["function_key"]
@@ -117,7 +138,7 @@ def _normalize_function_config(function_config: Dict[str, Dict[str, float]]) -> 
 
 def _point_cache_key(
     algo_key: str,
-    function_config: Dict[str, Dict[str, float]],
+    function_config: Dict[str, Dict[str, object]],
     gamma_value: float,
     n_value: float,
 ) -> Tuple:
@@ -133,7 +154,7 @@ def make_cache_key(
     algo_key: str,
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,
-    function_config: Dict[str, Dict[str, float]],
+    function_config: Dict[str, Dict[str, object]],
 ) -> Tuple:
     return (
         algo_key,
@@ -157,7 +178,7 @@ def compute(
     algo_key: str,
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,
-    function_config: Dict[str, Dict[str, float]],
+    function_config: Dict[str, Dict[str, object]],
     *,
     show_progress: bool,
     rerun_nan_cache: bool = False,
