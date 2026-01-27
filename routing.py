@@ -135,6 +135,7 @@ def _render_steps_editor(
             show_gutter=False,
             wrap=False,
             theme="github",
+            auto_update=True,
         )
         if isinstance(updated, str):
             st.session_state[code_key] = updated

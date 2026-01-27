@@ -2,10 +2,10 @@
 from dataclasses import dataclass, field
 import inspect
 import json
+import re
 from pathlib import Path
 from datetime import datetime, timezone
-from math import isfinite
-from math import sqrt
+from math import isfinite, sqrt
 from typing import Callable, Dict, List, Tuple
 
 from PEPit import PEP, Point
@@ -20,20 +20,21 @@ class AlgorithmEvaluationError(RuntimeError):
     """Raised when a solver-backed function cannot return tau."""
 
 
-def _dual_key_label(key) -> str:
-    if isinstance(key, tuple):
-        return " | ".join(str(part) for part in key)
-    return str(key)
+def _dual_key_label(key: str) -> str:
+    return " | ".join(part.strip() for part in key.split(","))
 
 
-def _extract_duals(func) -> Dict[str, Dict[str, float]]:
+def _extract_duals(func: Function) -> Dict[str, Dict[str, float]]:
     duals: Dict[str, Dict[str, float]] = {}
-    for name, df in func.get_class_constraints_duals().items():
-        try:
-            stacked = df.stack().to_dict()
-        except Exception:
-            stacked = {}
-        duals[name] = {_dual_key_label(k): float(v) for k, v in stacked.items()}
+    pattern = r"^.*?_\d+_(?P<constraint>.+?)\((?P<xi>[^()]*)\)$"
+    for constraint in func.list_of_class_constraints:
+        m = re.search(pattern, constraint.name)
+        if not m:
+            continue
+        constraint_name = m.group("constraint")
+        xi_id = m.group("xi")
+        dual_value = float(constraint.eval_dual())
+        duals.setdefault(constraint_name, {})[_dual_key_label(xi_id)] = dual_value
     return duals
 
 
