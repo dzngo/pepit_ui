@@ -2,6 +2,7 @@
 import json
 import re
 from pathlib import Path
+
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
@@ -9,18 +10,18 @@ import streamlit.components.v1 as components
 from streamlit_ace import st_ace
 
 from algorithms_registry import (
-    AlgorithmSpec,
-    HyperparameterSpec,
     ALGORITHMS,
+    CUSTOM_ALGORITHMS,
     FUNCTIONS,
     INITIAL_CONDITIONS,
     PERFORMANCE_METRICS,
+    AlgorithmSpec,
+    HyperparameterSpec,
     _compile_steps,
     get_algorithm_steps_code,
     get_base_algorithm_name,
     register_custom_algorithm,
     remove_custom_algorithm,
-    CUSTOM_ALGORITHMS,
     run_algorithm,
 )
 from utils import (
@@ -31,12 +32,12 @@ from utils import (
     _parse_float_input,
     _parse_float_list,
     _random_pattern_example,
-    build_dual_series_data,
     build_dual_section_html,
-    clear_algorithm_caches,
+    build_dual_series_data,
     clamp_value,
-    dual_ranking_by_slice,
+    clear_algorithm_caches,
     compute,
+    dual_ranking_by_slice,
     value_index,
 )
 

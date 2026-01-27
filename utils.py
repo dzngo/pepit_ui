@@ -1,9 +1,9 @@
 # utils.py
 import html
-from math import isfinite
 import pickle
-import time
 import random
+import time
+from math import isfinite
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -12,8 +12,8 @@ import streamlit as st
 import sympy as sp
 
 from algorithms_registry import (
-    DEFAULT_HYPERPARAMETERS,
     ALGORITHMS,
+    DEFAULT_HYPERPARAMETERS,
     AlgorithmEvaluationError,
     HyperparameterSpec,
     run_algorithm,
@@ -67,13 +67,7 @@ def _round_value(value: float, *, digits: int = 12) -> float:
 
 
 def _normalize_params(params: Dict[str, float]) -> Tuple[Tuple[str, float], ...]:
-    return tuple(
-        sorted(
-            (name, _round_value(value))
-            for name, value in params.items()
-            if value is not None
-        )
-    )
+    return tuple(sorted((name, _round_value(value)) for name, value in params.items() if value is not None))
 
 
 def _quantize_value(value: float, spec: HyperparameterSpec) -> float:
