@@ -226,7 +226,6 @@ document.querySelectorAll('.dual-button').forEach((btn) => {
   btn.addEventListener('click', () => {
     const seriesId = btn.getAttribute('data-series-id');
     const label = btn.getAttribute('data-label');
-    const value = btn.getAttribute('data-value');
     const display = `${label}`;
     if (selected.has(seriesId)) {
       selected.delete(seriesId);

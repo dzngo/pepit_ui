@@ -528,7 +528,6 @@ def build_dual_section_html(
         for dual_key, ranking in sorted(ranking_map.items(), key=lambda item: item[1], reverse=True):
             color = jet_color(ranking / max_ranking)
             text_color = text_color_for_bg(color)
-            value = current_duals.get(constraint, {}).get(dual_key)
             label = f"{constraint} | {dual_key}"
             data_id = f"{section_id}::{constraint}::{dual_key}"
             series_id = _dual_series_id(constraint, dual_key)
@@ -538,7 +537,8 @@ def build_dual_section_html(
                 f"data-series-id='{html_escape(series_id)}' "
                 f"data-section='{html_escape(section_key)}' "
                 f"data-ranking='{html_escape(ranking)}' "
-                f"data-label='{html_escape(label)}' data-value='{html_escape(format_dual_value(value))}' "
+                f"data-label='{html_escape(label)}'"
+                f"ranking-legend='Ranking: {html_escape(format_dual_value(ranking))}' "
                 f"style='background:{html_escape(color)};color:{html_escape(text_color)}'>"
                 f"{button_label}</button>"
             )
