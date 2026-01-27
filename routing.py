@@ -13,8 +13,6 @@ from algorithms_registry import (
     ALGORITHMS,
     CUSTOM_ALGORITHMS,
     FUNCTIONS,
-    INITIAL_CONDITIONS,
-    PERFORMANCE_METRICS,
     AlgorithmSpec,
     HyperparameterSpec,
     _compile_steps,
@@ -51,8 +49,6 @@ def init_session_state():
     st.session_state.setdefault("rerun_nan_caches", False)
     st.session_state.setdefault("function_store", {})
     st.session_state.setdefault("function_params_store", {})
-    st.session_state.setdefault("initial_condition_store", {})
-    st.session_state.setdefault("performance_metric_store", {})
 
 
 def reset_for_algorithm_change(algo_key: str):
@@ -110,7 +106,7 @@ def _editor_steps_source(spec: AlgorithmSpec) -> str:
     code = _steps_source(spec)
     pattern = r"^def\s+\w+\s*\("
     if re.search(pattern, code, flags=re.MULTILINE):
-        return re.sub(pattern, "def customized_steps(", code, count=1, flags=re.MULTILINE)
+        return re.sub(pattern, "def customized_algorithm(", code, count=1, flags=re.MULTILINE)
     return code
 
 
@@ -181,17 +177,13 @@ def _render_steps_editor(
                     steps = _compile_steps(steps_code)
                     temp_spec = AlgorithmSpec(
                         name=spec.name,
-                        steps=steps,
+                        algo=steps,
                         function_slots=list(spec.function_slots),
                         default_function_keys=dict(spec.default_function_keys),
-                        default_initial_condition=spec.default_initial_condition,
-                        default_performance_metric=spec.default_performance_metric,
                     )
                     run_algorithm(
                         algo_spec=temp_spec,
                         function_config=test_context["function_config"],
-                        initial_condition_key=test_context["initial_condition_key"],
-                        performance_metric_key=test_context["performance_metric_key"],
                         algo_params={
                             "gamma": float(test_context["gamma_min"]),
                             "n": float(test_context["n_min"]),
@@ -217,7 +209,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
     st.subheader("Configuration")
 
     sections = st.columns(2)
-    with sections[0]:
+    with sections[1]:
         with st.container(border=True):
             st.write("Set gamma/n ranges")
 
@@ -342,31 +334,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                     for key in stale_params:
                         slot_params.pop(key, None)
 
-        with st.container(border=True):
-            st.write("Initial condition and performance metric")
-            ic_store = st.session_state["initial_condition_store"]
-            pm_store = st.session_state["performance_metric_store"]
-            ic_options = list(INITIAL_CONDITIONS.keys())
-            pm_options = list(PERFORMANCE_METRICS.keys())
-            ic_default = ic_store.get(algo_key, spec.default_initial_condition)
-            pm_default = pm_store.get(algo_key, spec.default_performance_metric)
-            ic_selection = st.selectbox(
-                "Initial condition",
-                options=ic_options,
-                format_func=lambda key: INITIAL_CONDITIONS[key].label,
-                index=ic_options.index(ic_default) if ic_default in ic_options else 0,
-                key=f"ic-{algo_key}",
-            )
-            pm_selection = st.selectbox(
-                "Performance metric",
-                options=pm_options,
-                format_func=lambda key: PERFORMANCE_METRICS[key].label,
-                index=pm_options.index(pm_default) if pm_default in pm_options else 0,
-                key=f"pm-{algo_key}",
-            )
-            ic_store[algo_key] = ic_selection
-            pm_store[algo_key] = pm_selection
-    with sections[1]:
+    with sections[0]:
         with st.container(border=True):
             st.write("Algorithm")
             function_config = {
@@ -376,8 +344,6 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                 }
                 for slot in spec.function_slots
             }
-            ic_key = st.session_state["initial_condition_store"][algo_key]
-            pm_key = st.session_state["performance_metric_store"][algo_key]
             _render_steps_editor(
                 algo_key=algo_key,
                 spec=spec,
@@ -385,8 +351,6 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                 test_context={
                     "function_config": function_config,
                     "function_param_errors": list(function_param_errors),
-                    "initial_condition_key": ic_key,
-                    "performance_metric_key": pm_key,
                     "gamma_min": gamma_settings["min"],
                     "n_min": n_settings["min"],
                 },
@@ -416,7 +380,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                             st.session_state["selected_algorithm"] = None
                             st.session_state["pending_algorithm_select"] = next(iter(ALGORITHMS.keys()), None)
                         st.rerun()
-
+    st.divider()
     st.checkbox("Rerun Nan caches", key="rerun_nan_caches")
 
     plot_clicked = st.button("Plot", key="btn-plot-config")
@@ -464,8 +428,6 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                 }
                 for slot in spec.function_slots
             },
-            "initial_condition_key": st.session_state["initial_condition_store"][algo_key],
-            "performance_metric_key": st.session_state["performance_metric_store"][algo_key],
             "rerun_nan_caches": bool(st.session_state.get("rerun_nan_caches", False)),
         }
         st.session_state["ui_phase"] = "loading"
@@ -487,8 +449,6 @@ def render_loading_phase(algo_key: str, spec):
             f"**Algorithm**: `{spec.name}`",
             f"**gamma**: [{gamma_spec.min_value}, {gamma_spec.max_value}], step_size={gamma_spec.step}",
             f"**n**: [{n_spec.min_value}, {n_spec.max_value}], step_size={n_spec.step}",
-            f"**Initial condition**: {INITIAL_CONDITIONS[pending['initial_condition_key']].label}",
-            f"**Performance metric**: {PERFORMANCE_METRICS[pending['performance_metric_key']].label}",
         ]
         st.markdown("<br>".join(summary_lines), unsafe_allow_html=True)
         st.markdown("**Steps**")
@@ -507,8 +467,6 @@ def render_loading_phase(algo_key: str, spec):
         gamma_spec,
         n_spec,
         pending["function_config"],
-        pending["initial_condition_key"],
-        pending["performance_metric_key"],
         show_progress=True,
         rerun_nan_cache=bool(pending.get("rerun_nan_caches", False)),
     )
@@ -537,8 +495,6 @@ def render_results_phase(algo_key: str, spec):
         settings["gamma_spec"],
         settings["n_spec"],
         settings["function_config"],
-        settings["initial_condition_key"],
-        settings["performance_metric_key"],
         show_progress=False,
         rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
     )
@@ -559,8 +515,6 @@ def render_results_phase(algo_key: str, spec):
     with st.expander("Configuration details"):
         summary_lines = [
             f"**Algorithm**: `{spec.name}`",
-            f"**Initial condition**: {INITIAL_CONDITIONS[settings['initial_condition_key']].label}",
-            f"**Performance metric**: {PERFORMANCE_METRICS[settings['performance_metric_key']].label}",
         ]
         st.markdown("<br>".join(summary_lines), unsafe_allow_html=True)
         st.markdown("**Steps**")

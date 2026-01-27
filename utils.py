@@ -118,16 +118,12 @@ def _normalize_function_config(function_config: Dict[str, Dict[str, float]]) -> 
 def _point_cache_key(
     algo_key: str,
     function_config: Dict[str, Dict[str, float]],
-    initial_condition_key: str,
-    performance_metric_key: str,
     gamma_value: float,
     n_value: float,
 ) -> Tuple:
     return (
         algo_key,
         _normalize_function_config(function_config),
-        initial_condition_key,
-        performance_metric_key,
         _round_value(gamma_value),
         _round_value(n_value),
     )
@@ -138,8 +134,6 @@ def make_cache_key(
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,
     function_config: Dict[str, Dict[str, float]],
-    initial_condition_key: str,
-    performance_metric_key: str,
 ) -> Tuple:
     return (
         algo_key,
@@ -156,8 +150,6 @@ def make_cache_key(
             n_spec.value_type,
         ),
         _normalize_function_config(function_config),
-        initial_condition_key,
-        performance_metric_key,
     )
 
 
@@ -166,8 +158,6 @@ def compute(
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,
     function_config: Dict[str, Dict[str, float]],
-    initial_condition_key: str,
-    performance_metric_key: str,
     *,
     show_progress: bool,
     rerun_nan_cache: bool = False,
@@ -178,8 +168,6 @@ def compute(
         gamma_spec,
         n_spec,
         function_config,
-        initial_condition_key,
-        performance_metric_key,
     )
     if key in grid_cache:
         cached = grid_cache[key]
@@ -209,8 +197,6 @@ def compute(
             point_key = _point_cache_key(
                 algo_key,
                 function_config,
-                initial_condition_key,
-                performance_metric_key,
                 gamma_key,
                 n_key,
             )
@@ -252,8 +238,6 @@ def compute(
                 raw = run_algorithm(
                     algo_spec=spec,
                     function_config=function_config,
-                    initial_condition_key=initial_condition_key,
-                    performance_metric_key=performance_metric_key,
                     algo_params={
                         "gamma": float(gamma_value),
                         "n": float(n_value),

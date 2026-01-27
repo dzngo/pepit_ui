@@ -70,29 +70,11 @@ class FunctionSlot:
 
 
 @dataclass
-class InitialConditionSpec:
-    key: str
-    label: str
-    apply: Callable[[PEP, dict], None]
-    hyperparameters: List[HyperparameterSpec] = field(default_factory=list)
-
-
-@dataclass
-class PerformanceMetricSpec:
-    key: str
-    label: str
-    apply: Callable[[PEP, dict], None]
-    hyperparameters: List[HyperparameterSpec] = field(default_factory=list)
-
-
-@dataclass
 class AlgorithmSpec:
     name: str
-    steps: Callable[[PEP, Dict[str, object], Dict[str, float]], dict]
+    algo: Callable[[PEP, Dict[str, object], Dict[str, float]], dict]
     function_slots: List[FunctionSlot]
     default_function_keys: Dict[str, str]
-    default_initial_condition: str
-    default_performance_metric: str
 
 
 CUSTOM_ALGORITHMS_PATH = Path(__file__).resolve().parent / "custom_algorithms.json"
@@ -250,12 +232,13 @@ FUNCTIONS: Dict[str, FunctionSpec] = {
 }
 
 
-def gradient_descent_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
+def gradient_descent(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     func = funcs["f"]
     xs = func.stationary_point()
     xs.set_name("x_*")
     fs = func(xs)
     x0 = problem.set_initial_point()
+    problem.set_initial_condition((x0 - xs) ** 2 <= 1)
     x = x0
     x.set_name("x_0")
     steps = int(params["n"])
@@ -263,15 +246,16 @@ def gradient_descent_steps(problem: PEP, funcs: Dict[str, Function], params: Dic
     for i in range(steps):
         x = x - gamma * func.gradient(x)
         x.set_name(f"x_{i+1}")
-    return {"x0": x0, "x": x, "xs": xs, "fs": fs, "funcs": funcs, "func": func}
+    problem.set_performance_metric(func(x) - fs)
 
 
-def subgradient_method_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
+def subgradient_method(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     func = funcs["f"]
     xs = func.stationary_point()
     xs.set_name("x_*")
     fs = func(xs)
     x0 = problem.set_initial_point()
+    problem.set_initial_condition((x0 - xs) ** 2 <= 1)
     x = x0
     x.set_name("x_0")
     gx, fx = func.oracle(x)
@@ -282,16 +266,17 @@ def subgradient_method_steps(problem: PEP, funcs: Dict[str, Function], params: D
         x = x - gamma * gx
         gx, fx = func.oracle(x)
         x.set_name(f"x_{i+1}")
-    return {"x0": x0, "x": x, "xs": xs, "fs": fs, "fx": fx, "funcs": funcs, "func": func}
+    problem.set_performance_metric(fx - fs)
 
 
-def proximal_gradient_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
+def proximal_gradient(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     f1 = funcs["f1"]
     f2 = funcs["f2"]
     func = f1 + f2
     xs = func.stationary_point()
     xs.set_name("x_*")
     x0 = problem.set_initial_point()
+    problem.set_initial_condition((x0 - xs) ** 2 <= 1)
     x = x0
     x.set_name("x_0")
     steps = int(params["n"])
@@ -300,15 +285,16 @@ def proximal_gradient_steps(problem: PEP, funcs: Dict[str, Function], params: Di
         y = x - gamma * f1.gradient(x)
         x, _, _ = proximal_step(y, f2, gamma)
         x.set_name(f"x_{i+1}")
-    return {"x0": x0, "x": x, "xs": xs, "funcs": funcs, "func": func, "f1": f1, "f2": f2}
+    problem.set_performance_metric((x - xs) ** 2)
 
 
-def accelerated_proximal_point_steps(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
+def accelerated_proximal_point(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
     func = funcs["f"]
     xs = func.stationary_point()
     xs.set_name("x_*")
     fs = func(xs)
     x0 = problem.set_initial_point()
+    problem.set_initial_condition((x0 - xs) ** 2 <= 1)
     x = x0
     x.set_name("x_0")
     y = x0
@@ -323,59 +309,13 @@ def accelerated_proximal_point_steps(problem: PEP, funcs: Dict[str, Function], p
         y = x + (lam_old - 1) / lam * (x - x_old)
         x.set_name(f"x_{i+1}")
         y.set_name(f"y_{i+1}")
-    return {"x0": x0, "x": x, "xs": xs, "fs": fs, "funcs": funcs, "func": func}
-
-
-def ic_unit_distance(problem: PEP, state: dict) -> None:
-    problem.set_initial_condition((state["x0"] - state["xs"]) ** 2 <= 1)
-
-
-def pm_function_gap(problem: PEP, state: dict) -> None:
-    problem.set_performance_metric(state["func"](state["x"]) - state["fs"])
-
-
-def pm_subgradient_gap(problem: PEP, state: dict) -> None:
-    problem.set_performance_metric(state["fx"] - state["fs"])
-
-
-def pm_distance_to_opt(problem: PEP, state: dict) -> None:
-    problem.set_performance_metric((state["x"] - state["xs"]) ** 2)
-
-
-INITIAL_CONDITIONS: Dict[str, InitialConditionSpec] = {
-    "unit_distance_to_opt": InitialConditionSpec(
-        key="unit_distance_to_opt",
-        label="||x0 - xs||^2 <= 1",
-        apply=ic_unit_distance,
-    ),
-}
-
-
-PERFORMANCE_METRICS: Dict[str, PerformanceMetricSpec] = {
-    "function_gap": PerformanceMetricSpec(
-        key="function_gap",
-        label="func(x) - f*",
-        apply=pm_function_gap,
-    ),
-    "subgradient_gap": PerformanceMetricSpec(
-        key="subgradient_gap",
-        label="fx - f*",
-        apply=pm_subgradient_gap,
-    ),
-    "distance_to_opt": PerformanceMetricSpec(
-        key="distance_to_opt",
-        label="||x - x*||^2",
-        apply=pm_distance_to_opt,
-    ),
-}
+    problem.set_performance_metric(func(x) - fs)
 
 
 def run_algorithm(
     *,
     algo_spec: AlgorithmSpec,
     function_config: Dict[str, Dict[str, float]],
-    initial_condition_key: str,
-    performance_metric_key: str,
     algo_params: Dict[str, float],
     wrapper: str = "cvxpy",
     solver: str | None = None,
@@ -413,11 +353,7 @@ def run_algorithm(
         func = problem.declare_function(function_spec.cls, **resolved_params)
         funcs[slot_key] = func
 
-    state = algo_spec.steps(problem, funcs, algo_params)
-    initial_spec = INITIAL_CONDITIONS[initial_condition_key]
-    perf_spec = PERFORMANCE_METRICS[performance_metric_key]
-    initial_spec.apply(problem, state)
-    perf_spec.apply(problem, state)
+    algo_spec.algo(problem, funcs, algo_params)
 
     tau = problem.solve(wrapper=wrapper, solver=solver, verbose=0)
     if tau is None:
@@ -433,35 +369,27 @@ def run_algorithm(
 BASE_ALGORITHMS: Dict[str, AlgorithmSpec] = {
     "gradient_descent": AlgorithmSpec(
         name="gradient_descent",
-        steps=gradient_descent_steps,
+        algo=gradient_descent,
         function_slots=[FunctionSlot(key="f")],
         default_function_keys={"f": "SmoothConvexFunction"},
-        default_initial_condition="unit_distance_to_opt",
-        default_performance_metric="function_gap",
     ),
     "subgradient_method": AlgorithmSpec(
         name="subgradient_method",
-        steps=subgradient_method_steps,
+        algo=subgradient_method,
         function_slots=[FunctionSlot(key="f")],
         default_function_keys={"f": "ConvexLipschitzFunction"},
-        default_initial_condition="unit_distance_to_opt",
-        default_performance_metric="subgradient_gap",
     ),
     "proximal_gradient": AlgorithmSpec(
         name="proximal_gradient",
-        steps=proximal_gradient_steps,
+        algo=proximal_gradient,
         function_slots=[FunctionSlot(key="f1"), FunctionSlot(key="f2")],
         default_function_keys={"f1": "SmoothStronglyConvexFunction", "f2": "ConvexFunction"},
-        default_initial_condition="unit_distance_to_opt",
-        default_performance_metric="distance_to_opt",
     ),
     "accelerated_proximal_point": AlgorithmSpec(
         name="accelerated_proximal_point",
-        steps=accelerated_proximal_point_steps,
+        algo=accelerated_proximal_point,
         function_slots=[FunctionSlot(key="f")],
         default_function_keys={"f": "SmoothStronglyConvexFunction"},
-        default_initial_condition="unit_distance_to_opt",
-        default_performance_metric="function_gap",
     ),
 }
 
@@ -477,9 +405,9 @@ def _compile_steps(steps_code: str) -> Callable[[PEP, Dict[str, object], Dict[st
         "Function": Function,
     }
     exec(steps_code, namespace)
-    steps = namespace.get("customized_steps")
+    steps = namespace.get("customized_algorithm")
     if not callable(steps):
-        raise ValueError("Custom steps code must define a callable named 'customized_steps'.")
+        raise ValueError("Custom steps code must define a callable named 'customized_algorithm'.")
     return steps
 
 
@@ -510,11 +438,9 @@ def _custom_spec_from_payload(name: str, payload: dict) -> AlgorithmSpec | None:
     steps = _compile_steps(steps_code)
     return AlgorithmSpec(
         name=name,
-        steps=steps,
+        algo=steps,
         function_slots=list(base_spec.function_slots),
         default_function_keys=dict(base_spec.default_function_keys),
-        default_initial_condition=base_spec.default_initial_condition,
-        default_performance_metric=base_spec.default_performance_metric,
     )
 
 
@@ -541,9 +467,9 @@ def get_algorithm_steps_code(name: str) -> str:
         if isinstance(steps_code, str):
             return steps_code
     try:
-        return inspect.getsource(ALGORITHMS[name].steps)
+        return inspect.getsource(ALGORITHMS[name].algo)
     except OSError:
-        return ALGORITHMS[name].steps.__name__
+        return ALGORITHMS[name].algo.__name__
 
 
 def get_base_algorithm_name(name: str) -> str:
@@ -569,11 +495,9 @@ def register_custom_algorithm(
     steps = _compile_steps(steps_code)
     spec = AlgorithmSpec(
         name=name,
-        steps=steps,
+        algo=steps,
         function_slots=list(base_spec.function_slots),
         default_function_keys=dict(base_spec.default_function_keys),
-        default_initial_condition=base_spec.default_initial_condition,
-        default_performance_metric=base_spec.default_performance_metric,
     )
     CUSTOM_ALGORITHMS[name] = {
         "steps_code": steps_code,
