@@ -638,25 +638,69 @@ _PATTERN_EXAMPLES = (
     "exp(-x)",
 )
 
+_X_SYMBOL = sp.symbols("x")
+
 
 def _random_pattern_example() -> str:
     return f"example: {random.choice(_PATTERN_EXAMPLES)}"
 
 
-def _evaluate_pattern_expression(expression: str, x_values: np.ndarray) -> tuple[np.ndarray | None, str | None]:
+def _build_pattern_param_values(function_config: dict) -> tuple[dict[str, float], list[str], list[str]]:
+    param_values: dict[str, float] = {}
+    invalid: list[str] = []
+    conflicts: list[str] = []
+    for _, slot_config in sorted(function_config.items()):
+        for name, raw in (slot_config.get("function_params") or {}).items():
+            if name in ("x", "gamma", "n", "pi", "e"):
+                conflicts.append(name)
+                continue
+            value = None
+            if isinstance(raw, (int, float, np.integer, np.floating)):
+                value = float(raw)
+            elif isinstance(raw, str) and raw.strip():
+                try:
+                    value = float(raw)
+                except ValueError:
+                    invalid.append(name)
+            if value is None:
+                if name not in invalid:
+                    invalid.append(name)
+                continue
+            if name in param_values and not np.isclose(param_values[name], value, rtol=1e-6, atol=1e-12):
+                conflicts.append(name)
+                continue
+            param_values[name] = value
+    return param_values, sorted(set(invalid)), sorted(set(conflicts))
+
+
+def _evaluate_pattern_expression(
+    expression: str,
+    x_values: np.ndarray,
+    param_values: dict[str, float],
+    variable_names: tuple[str, ...],
+) -> tuple[np.ndarray | None, str | None]:
     if not expression:
         return None, None
     cleaned = expression.strip()
     if not cleaned:
         return None, None
+    conflicts = set(param_values).intersection(variable_names)
+    if conflicts:
+        names = ", ".join(sorted(conflicts))
+        return None, f"Parameter name conflicts with variable names: {names}"
+    locals_map = dict(param_values)
+    for name in variable_names:
+        locals_map[name] = _X_SYMBOL
     try:
-        parsed = sp.sympify(cleaned)
+        parsed = sp.sympify(cleaned, locals=locals_map)
     except (sp.SympifyError, TypeError, ValueError) as err:
         return None, f"Invalid expression: {err}"
-    if parsed.free_symbols - {sp.symbols("x")}:
-        return None, "Expression must use x only."
+    remaining_symbols = parsed.free_symbols - {_X_SYMBOL}
+    if remaining_symbols:
+        names = ", ".join(sorted(sym.name for sym in remaining_symbols))
+        return None, f"Unknown parameters: {names}"
     try:
-        fn = sp.lambdify(sp.symbols("x"), parsed, "numpy")
+        fn = sp.lambdify(_X_SYMBOL, parsed, "numpy")
         values = np.asarray(fn(x_values), dtype=float)
     except Exception:
         return None, "Expression could not be evaluated for the current axis values."

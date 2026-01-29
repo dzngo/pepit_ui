@@ -25,6 +25,7 @@ from algorithms_registry import (
 from utils import (
     BASE_GAMMA_SPEC,
     BASE_N_SPEC,
+    _build_pattern_param_values,
     _evaluate_pattern_expression,
     _float_text_default,
     _parse_float_input,
@@ -543,6 +544,17 @@ def render_results_phase(algo_key: str, spec):
     st.session_state.setdefault(pattern_n_key, "")
     gamma_overlay_values = None
     n_overlay_values = None
+    base_param_values, invalid_params, conflict_params = _build_pattern_param_values(settings["function_config"])
+    if base_param_values:
+        params_hint = ", ".join(f"{name}={value:g}" for name, value in sorted(base_param_values.items()))
+    else:
+        params_hint = "none"
+    hint_parts = [f"Available parameters: {params_hint} "]
+    if invalid_params:
+        hint_parts.append(f"Ignored (non-scalar): {', '.join(invalid_params)}.")
+    if conflict_params:
+        hint_parts.append(f"Conflicts: {', '.join(conflict_params)}.")
+    params_hint_text = " ".join(hint_parts)
 
     with col1:
         with st.container(border=True):
@@ -561,7 +573,15 @@ def render_results_phase(algo_key: str, spec):
                 key=pattern_gamma_key,
                 placeholder=_random_pattern_example(),
             )
-            gamma_overlay_values, gamma_error = _evaluate_pattern_expression(gamma_pattern, gamma_values)
+            st.caption(f"{params_hint_text} and n (current slider value).")
+            gamma_param_values = dict(base_param_values)
+            gamma_param_values["n"] = float(st.session_state[n_slider_key])
+            gamma_overlay_values, gamma_error = _evaluate_pattern_expression(
+                gamma_pattern,
+                gamma_values,
+                gamma_param_values,
+                ("x", "gamma"),
+            )
             if gamma_error:
                 st.error(gamma_error)
     with col2:
@@ -592,7 +612,15 @@ def render_results_phase(algo_key: str, spec):
                 key=pattern_n_key,
                 placeholder=_random_pattern_example(),
             )
-            n_overlay_values, n_error = _evaluate_pattern_expression(n_pattern, n_values)
+            st.caption(f"{params_hint_text} and gamma (current slider value).")
+            n_param_values = dict(base_param_values)
+            n_param_values["gamma"] = float(st.session_state[gamma_slider_key])
+            n_overlay_values, n_error = _evaluate_pattern_expression(
+                n_pattern,
+                n_values,
+                n_param_values,
+                ("x", "n"),
+            )
             if n_error:
                 st.error(n_error)
 
