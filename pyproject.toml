@@ -14,10 +14,5 @@ dependencies = [
     "sympy>=1.13.0",
 ]
 
-[tool.uv.workspace]
-members = [
-    "modules/PEPit",
-]
-
 [tool.uv.sources]
-pepit = { workspace = true, editable = true }
+pepit = { git = "https://github.com/dzngo/PEPit.git", rev = "f851d4fcb9f9a69dbf0bb53873240cfe43b3b35b" }
