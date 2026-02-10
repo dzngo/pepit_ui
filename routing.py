@@ -1,12 +1,11 @@
 # routing.py
-import json
 import re
 from pathlib import Path
 
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
+import streamlit.components.v2 as components_v2
 from streamlit_ace import st_ace
 
 from algorithms_registry import (
@@ -480,6 +479,10 @@ def render_loading_phase(algo_key: str, spec):
     st.session_state["pending_settings"] = None
     st.session_state["ui_phase"] = "results"
     st.session_state[f"dual_selection_{algo_key}"] = {}
+    st.session_state[_runs_key(algo_key)] = []
+    st.session_state[_run_counter_key(algo_key)] = 0
+    st.session_state.pop(_last_recompute_event_key(algo_key), None)
+    st.session_state[f"dual_selected_{algo_key}"] = []
     st.session_state[f"gamma_slider_{algo_key}"] = float(gamma_spec.min_value)
     st.session_state[f"n_slider_{algo_key}"] = float(n_spec.min_value)
     st.rerun()
@@ -630,6 +633,22 @@ def render_results_phase(algo_key: str, spec):
     tau_n = tau_grid[gamma_idx, :]
     current_tau = tau_grid[gamma_idx, n_idx]
     warning_messages = set(cached_warnings)
+    runs = st.session_state.setdefault(_runs_key(algo_key), [])
+    run_results: dict[str, tuple] = {}
+    for run in runs:
+        selected_series_ids = tuple(sorted(set(run.get("selected_series_ids", []))))
+        if not selected_series_ids:
+            continue
+        run_result = compute(
+            algo_key,
+            settings["gamma_spec"],
+            settings["n_spec"],
+            settings["function_config"],
+            show_progress=False,
+            rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
+            selected_dual_series_ids=selected_series_ids,
+        )
+        run_results[run["id"]] = run_result
 
     gamma_fig = go.Figure()
     gamma_fig.add_trace(
@@ -637,6 +656,7 @@ def render_results_phase(algo_key: str, spec):
             x=gamma_values,
             y=tau_gamma,
             mode="lines",
+            line={"color": "#9aa0a6", "width": 2},
             hovertemplate="gamma=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>",
         )
     )
@@ -662,6 +682,27 @@ def render_results_phase(algo_key: str, spec):
                 name="current",
             )
         )
+    for run in runs:
+        if not run.get("visible", True):
+            continue
+        run_result = run_results.get(run["id"])
+        if run_result is None:
+            warning_messages.add(f"{run['name']}: recomputed data unavailable in cache.")
+            continue
+        run_tau_grid = run_result[2]
+        run_warnings = run_result[3]
+        for warning in run_warnings:
+            warning_messages.add(f"{run['name']}: {warning}")
+        gamma_fig.add_trace(
+            go.Scatter(
+                x=gamma_values,
+                y=run_tau_grid[:, n_idx],
+                mode="lines",
+                line={"color": run["color"], "width": 2},
+                hovertemplate=f"gamma=%{{x:.3f}}<br>{run['name']}=%{{y:.3e}}<extra></extra>",
+                showlegend=False,
+            )
+        )
     gamma_fig.update_layout(
         showlegend=False,
         title={"text": "Tau vs gamma", "pad": {"t": 6, "b": 0}},
@@ -677,6 +718,7 @@ def render_results_phase(algo_key: str, spec):
             x=n_values,
             y=tau_n,
             mode="lines",
+            line={"color": "#9aa0a6", "width": 2},
             hovertemplate="n=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>",
         )
     )
@@ -701,6 +743,23 @@ def render_results_phase(algo_key: str, spec):
                 hovertemplate="n=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>",
             )
         )
+    for run in runs:
+        if not run.get("visible", True):
+            continue
+        run_result = run_results.get(run["id"])
+        if run_result is None:
+            continue
+        run_tau_grid = run_result[2]
+        n_fig.add_trace(
+            go.Scatter(
+                x=n_values,
+                y=run_tau_grid[gamma_idx, :],
+                mode="lines",
+                line={"color": run["color"], "width": 2},
+                hovertemplate=f"n=%{{x:.3f}}<br>{run['name']}=%{{y:.3e}}<extra></extra>",
+                showlegend=False,
+            )
+        )
     n_fig.update_layout(
         showlegend=False,
         title={"text": "Tau vs n", "pad": {"t": 6, "b": 0}},
@@ -723,28 +782,105 @@ def render_results_phase(algo_key: str, spec):
             "Some parameter combinations could not be solved; missing points are shown as gaps.\n" + warning_text
         )
 
-    render_dual_values_panel(
+    render_recompute_runs_panel(algo_key)
+
+    event = render_dual_values_panel(
         algo_key,
         duals_grid,
         gamma_values,
         n_values,
         gamma_idx,
         n_idx,
+        runs,
+        run_results,
     )
+    if event:
+        event_id = str(event.get("request_id", ""))
+        last_event_key = _last_recompute_event_key(algo_key)
+        if event_id and st.session_state.get(last_event_key) != event_id:
+            selected_series_ids = tuple(sorted(set(event.get("selected_series_ids", []))))
+            selected_labels = list(event.get("selected_labels", []))
+            st.session_state[f"dual_selected_{algo_key}"] = list(selected_series_ids)
+            if selected_series_ids:
+                with st.spinner("Recomputing tau grid with selected dual values..."):
+                    recompute_result = compute(
+                        algo_key,
+                        settings["gamma_spec"],
+                        settings["n_spec"],
+                        settings["function_config"],
+                        show_progress=True,
+                        rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
+                        selected_dual_series_ids=selected_series_ids,
+                    )
+                if recompute_result is None:
+                    st.error("Unable to recompute tau grid for selected dual values.")
+                else:
+                    next_index = int(st.session_state.setdefault(_run_counter_key(algo_key), 0)) + 1
+                    st.session_state[_run_counter_key(algo_key)] = next_index
+                    runs.append(
+                        {
+                            "id": f"run-{next_index}",
+                            "name": f"Run {next_index}",
+                            "color": RUN_COLORS[(next_index - 1) % len(RUN_COLORS)],
+                            "selected_series_ids": list(selected_series_ids),
+                            "selected_labels": selected_labels,
+                            "visible": True,
+                        }
+                    )
+            st.session_state[last_event_key] = event_id
+            st.rerun()
 
 
 DUAL_BUTTON_MIN_WIDTH = 70
 DUAL_BUTTON_MAX_WIDTH = 100
-DUAL_BUTTON_ROW_HEIGHT = 52
-DUAL_SECTION_PADDING = 70
 DUAL_PLOT_HEIGHT = 100
-DUAL_PLOT_COLUMNS = 7
 DUAL_PLOT_MIN_WIDTH = 220
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
-DUAL_PANEL_HTML = (UI_DIR / "dual_panel.html").read_text()
 DUAL_PANEL_CSS = (UI_DIR / "dual_panel.css").read_text()
-DUAL_PANEL_JS = (UI_DIR / "dual_panel.js").read_text()
+DUAL_PANEL_V2_JS = (UI_DIR / "dual_panel_v2.js").read_text()
+RUN_COLORS = (
+    "#f97316",
+    "#0ea5e9",
+    "#14b8a6",
+    "#e11d48",
+    "#f59e0b",
+    "#22c55e",
+    "#ef4444",
+    "#3b82f6",
+    "#84cc16",
+    "#a855f7",
+)
+
+
+def _format_dual_panel_css() -> str:
+    plot_card_title_px = max(11, min(14, DUAL_PLOT_HEIGHT // 15))
+    css = DUAL_PANEL_CSS
+    css = css.replace("{{PLOT_MIN_WIDTH}}", str(DUAL_PLOT_MIN_WIDTH))
+    css = css.replace("{{PLOT_HEIGHT}}", str(DUAL_PLOT_HEIGHT))
+    css = css.replace("{{PLOT_CARD_TITLE_PX}}", str(plot_card_title_px))
+    css = css.replace("{{BUTTON_MIN_WIDTH}}", str(DUAL_BUTTON_MIN_WIDTH))
+    css = css.replace("{{BUTTON_MAX_WIDTH}}", str(DUAL_BUTTON_MAX_WIDTH))
+    return css
+
+
+DUAL_PANEL_COMPONENT = components_v2.component(
+    "dual_panel_component_v2",
+    html="<div id='dual-panel-v2-root'></div>",
+    js=DUAL_PANEL_V2_JS,
+)
+
+
+def _runs_key(algo_key: str) -> str:
+    return f"recompute_runs_{algo_key}"
+
+
+def _run_counter_key(algo_key: str) -> str:
+    return f"recompute_counter_{algo_key}"
+
+
+def _last_recompute_event_key(algo_key: str) -> str:
+    return f"recompute_event_{algo_key}"
 
 
 def render_dual_values_panel(
@@ -754,11 +890,13 @@ def render_dual_values_panel(
     n_values: np.ndarray,
     gamma_idx: int,
     n_idx: int,
-) -> None:
+    runs: list[dict],
+    run_results: dict[str, tuple],
+) -> dict | None:
     st.subheader("Dual values")
     if not duals_grid:
         st.caption("No dual values available for these settings.")
-        return
+        return None
     metric_labels = {
         "non_zero_pct": "Non-zero %",
         "non_zero_pct_with_none": "Non-zero % (None=0)",
@@ -791,11 +929,10 @@ def render_dual_values_panel(
         gamma_idx,
         n_idx,
     )
-    series_json = json.dumps(series_data).replace("</", "<\\/")
 
     gamma_ranking_title = f"Ranking vs gamma (n = {n_values[n_idx]})"
     n_ranking_title = f"Ranking vs n (gamma = {gamma_values[gamma_idx]})"
-    gamma_html, gamma_count = build_dual_section_html(
+    gamma_html, _ = build_dual_section_html(
         section_id=f"{algo_key}-gamma",
         section_key="gamma",
         title=gamma_ranking_title,
@@ -803,7 +940,7 @@ def render_dual_values_panel(
         current_duals=current_duals,
         min_width=DUAL_BUTTON_MIN_WIDTH,
     )
-    n_html, n_count = build_dual_section_html(
+    n_html, _ = build_dual_section_html(
         section_id=f"{algo_key}-n",
         section_key="n",
         title=n_ranking_title,
@@ -813,26 +950,78 @@ def render_dual_values_panel(
     )
     gamma_plot_title = f"Dual value vs gamma (n = {n_values[n_idx]})"
     n_plot_title = f"Dual value vs n (gamma = {gamma_values[gamma_idx]})"
-    total_buttons = gamma_count + n_count
-    plot_rows = (max(total_buttons, 1) + DUAL_PLOT_COLUMNS - 1) // DUAL_PLOT_COLUMNS
-    component_height = 140 + DUAL_SECTION_PADDING * 2 + DUAL_PLOT_HEIGHT * plot_rows * 2
-    component_height = max(component_height, 700)
-    plot_card_title_px = max(11, min(14, DUAL_PLOT_HEIGHT // 15))
+    selected_series_ids = st.session_state.get(f"dual_selected_{algo_key}", [])
+    dual_runs_data: list[dict] = []
+    for run in runs:
+        if not run.get("visible", True):
+            continue
+        run_result = run_results.get(run["id"])
+        if run_result is None:
+            continue
+        run_duals_grid = run_result[4]
+        run_series_data = build_dual_series_data(
+            run_duals_grid,
+            gamma_values,
+            n_values,
+            gamma_idx,
+            n_idx,
+        )
+        dual_runs_data.append(
+            {
+                "id": run["id"],
+                "name": run["name"],
+                "color": run["color"],
+                "series_data": run_series_data,
+            }
+        )
+    result = DUAL_PANEL_COMPONENT(
+        key=f"dual-panel-{algo_key}-{gamma_idx}-{n_idx}",
+        data={
+            "css": _format_dual_panel_css(),
+            "series_data": series_data,
+            "dual_runs": dual_runs_data,
+            "gamma_html": gamma_html,
+            "n_html": n_html,
+            "plot_title_gamma": gamma_plot_title,
+            "plot_title_n": n_plot_title,
+            "selected_series_ids": selected_series_ids,
+        },
+        height="content",
+        isolate_styles=False,
+        on_recompute_change=lambda: None,
+    )
+    if result is None:
+        return None
+    recompute = result.get("recompute")
+    return recompute if isinstance(recompute, dict) else None
 
-    css = DUAL_PANEL_CSS
-    css = css.replace("{{PLOT_MIN_WIDTH}}", str(DUAL_PLOT_MIN_WIDTH))
-    css = css.replace("{{PLOT_HEIGHT}}", str(DUAL_PLOT_HEIGHT))
-    css = css.replace("{{PLOT_CARD_TITLE_PX}}", str(plot_card_title_px))
-    css = css.replace("{{BUTTON_MIN_WIDTH}}", str(DUAL_BUTTON_MIN_WIDTH))
-    css = css.replace("{{BUTTON_MAX_WIDTH}}", str(DUAL_BUTTON_MAX_WIDTH))
 
-    html = DUAL_PANEL_HTML
-    html = html.replace("{{CSS}}", css)
-    html = html.replace("{{JS}}", DUAL_PANEL_JS)
-    html = html.replace("{{SERIES_JSON}}", series_json)
-    html = html.replace("{{GAMMA_HTML}}", gamma_html)
-    html = html.replace("{{N_HTML}}", n_html)
-    html = html.replace("{{PLOT_TITLE_GAMMA}}", gamma_plot_title)
-    html = html.replace("{{PLOT_TITLE_N}}", n_plot_title)
+def render_recompute_runs_panel(algo_key: str) -> None:
+    st.subheader("Recompute Runs")
+    runs = st.session_state.setdefault(_runs_key(algo_key), [])
+    with st.container(border=True):
+        st.markdown("`Baseline`")
+        st.caption("View duals: All")
 
-    components.html(html, height=component_height, scrolling=True)
+    for run in runs:
+        run_id = run["id"]
+        show_key = f"run-visible-{algo_key}-{run_id}"
+        st.session_state.setdefault(show_key, bool(run.get("visible", True)))
+        row_col, control_col = st.columns([4, 1])
+        with row_col:
+            swatch = (
+                f"<span style='display:inline-block;width:10px;height:10px;border-radius:2px;"
+                f"background:{run['color']};margin-right:8px;'></span>"
+            )
+            st.markdown(f"{swatch}`{run['name']}`", unsafe_allow_html=True)
+            run["visible"] = bool(st.checkbox("Show", key=show_key))
+        with control_col:
+            if st.button("Remove", key=f"run-remove-{algo_key}-{run_id}"):
+                runs[:] = [candidate for candidate in runs if candidate["id"] != run_id]
+                st.rerun()
+        with st.expander(f"View duals for {run['name']}"):
+            labels = [str(label) for label in run.get("selected_labels", [])]
+            if labels:
+                st.markdown(" , ".join(f"`{label}`" for label in labels))
+            else:
+                st.caption("No dual values selected.")

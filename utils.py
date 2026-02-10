@@ -141,12 +141,14 @@ def _point_cache_key(
     function_config: Dict[str, Dict[str, object]],
     gamma_value: float,
     n_value: float,
+    selected_dual_series_ids: tuple[str, ...] | None = None,
 ) -> Tuple:
     return (
         algo_key,
         _normalize_function_config(function_config),
         _round_value(gamma_value),
         _round_value(n_value),
+        tuple(selected_dual_series_ids or ()),
     )
 
 
@@ -155,6 +157,7 @@ def make_cache_key(
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,
     function_config: Dict[str, Dict[str, object]],
+    selected_dual_series_ids: tuple[str, ...] | None = None,
 ) -> Tuple:
     return (
         algo_key,
@@ -171,6 +174,7 @@ def make_cache_key(
             n_spec.value_type,
         ),
         _normalize_function_config(function_config),
+        tuple(selected_dual_series_ids or ()),
     )
 
 
@@ -182,6 +186,7 @@ def compute(
     *,
     show_progress: bool,
     rerun_nan_cache: bool = False,
+    selected_dual_series_ids: tuple[str, ...] | None = None,
 ):
     grid_cache = st.session_state.setdefault("tau_grid_cache", {})
     key = make_cache_key(
@@ -189,6 +194,7 @@ def compute(
         gamma_spec,
         n_spec,
         function_config,
+        selected_dual_series_ids,
     )
     if key in grid_cache:
         cached = grid_cache[key]
@@ -220,6 +226,7 @@ def compute(
                 function_config,
                 gamma_key,
                 n_key,
+                selected_dual_series_ids,
             )
             cached_point = point_cache.get(point_key)
             if cached_point is None or not isinstance(cached_point, tuple):
@@ -263,6 +270,7 @@ def compute(
                         "gamma": float(gamma_value),
                         "n": float(n_value),
                     },
+                    active_dual_series_ids=set(selected_dual_series_ids or ()),
                 )
                 if isinstance(raw, tuple) and len(raw) == 2:
                     tau_raw, duals = raw
@@ -543,7 +551,7 @@ def build_dual_section_html(
                 f"data-section='{html_escape(section_key)}' "
                 f"data-ranking='{html_escape(ranking)}' "
                 f"data-label='{html_escape(label)}'"
-                f"ranking-legend='Ranking: {html_escape(format_dual_value(ranking))}' "
+                f"ranking-legend='score: {html_escape(format_dual_value(ranking))}' "
                 f"style='background:{html_escape(color)};color:{html_escape(text_color)}'>"
                 f"{button_label}</button>"
             )

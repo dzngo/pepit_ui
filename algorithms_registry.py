@@ -23,10 +23,10 @@ def _dual_key_label(key: str) -> str:
     return " | ".join(part.strip() for part in key.split(","))
 
 
-def _extract_duals(func: Function) -> Dict[str, Dict[str, float]]:
+def _extract_duals(problem: PEP) -> Dict[str, Dict[str, float]]:
     duals: Dict[str, Dict[str, float]] = {}
     pattern = r"^.*?_\d+_(?P<constraint>.+?)\((?P<xi>[^()]*)\)$"
-    for constraint in func.list_of_class_constraints:
+    for constraint in problem._list_of_prepared_constraints:
         m = re.search(pattern, constraint.name)
         if not m:
             continue
@@ -35,6 +35,16 @@ def _extract_duals(func: Function) -> Dict[str, Dict[str, float]]:
         dual_value = float(constraint.eval_dual())
         duals.setdefault(constraint_name, {})[_dual_key_label(xi_id)] = dual_value
     return duals
+
+
+def _constraint_series_id(constraint_name: str) -> str | None:
+    pattern = r"^.*?_\d+_(?P<constraint>.+?)\((?P<xi>[^()]*)\)$"
+    match = re.search(pattern, constraint_name)
+    if not match:
+        return None
+    constraint = match.group("constraint")
+    xi_id = _dual_key_label(match.group("xi"))
+    return f"{constraint}||{xi_id}"
 
 
 @dataclass
@@ -319,6 +329,7 @@ def run_algorithm(
     algo_params: Dict[str, float],
     wrapper: str = "cvxpy",
     solver: str | None = None,
+    active_dual_series_ids: set[str] | None = None,
 ) -> Tuple[float, Dict[str, Dict[str, float]]]:
     problem = PEP()
     funcs: Dict[str, object] = {}
@@ -355,14 +366,22 @@ def run_algorithm(
 
     algo_spec.algo(problem, funcs, algo_params)
 
+    problem._prepare_constraints(verbose=0)
+    if active_dual_series_ids:
+        for constraint in problem._list_of_prepared_constraints:
+            series_id = _constraint_series_id(constraint.name)
+            if series_id is None:
+                continue
+            constraint.activated = series_id in active_dual_series_ids
+
     tau = problem.solve(wrapper=wrapper, solver=solver, verbose=0)
     if tau is None:
         raise AlgorithmEvaluationError(
             f"Solver failed to find a feasible tau for {algo_spec.name} with these hyperparameters."
         )
     duals: Dict[str, Dict[str, float]] = {}
-    for func in funcs.values():
-        duals.update(_extract_duals(func))
+    duals.update(_extract_duals(problem))
+
     return float(tau), duals
 
 
