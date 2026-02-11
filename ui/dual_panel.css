@@ -23,8 +23,15 @@
   padding: 14px 14px 10px 14px;
   background: rgba(255, 255, 255, 0.6);
 }
+.run-row + .run-row {
+  border-top: 1px dashed rgba(49, 51, 63, 0.15);
+  margin-top: 10px;
+  padding-top: 10px;
+}
 .dual-section-title {
   font-weight: 600;
+  font-size: 1.25rem;
+  line-height: 1.25;
   margin: 8px 0 10px 0;
 }
 .dual-constraint-title {
@@ -91,6 +98,14 @@
 .dual-toggle-button.is-active {
   background: #111;
   color: #fff;
+}
+.dual-toggle-button.is-neutral {
+  background: #fff;
+  color: #111;
+  border-color: rgba(49, 51, 63, 0.35);
+}
+.dual-toggle-button.is-neutral:hover {
+  background: #f7f7f7;
 }
 .dual-button.is-all-zero {
   background: #111 !important;
@@ -214,6 +229,8 @@
 }
 .dual-selected-title {
   font-weight: 600;
+  font-size: 1.2rem;
+  line-height: 1.2;
 }
 .dual-clear-button {
   border: 1px solid #111;

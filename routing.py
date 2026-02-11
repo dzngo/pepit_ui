@@ -3,7 +3,6 @@ import re
 from pathlib import Path
 
 import numpy as np
-import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v2 as components_v2
 from streamlit_ace import st_ace
@@ -25,18 +24,14 @@ from utils import (
     BASE_GAMMA_SPEC,
     BASE_N_SPEC,
     _build_pattern_param_values,
-    _evaluate_pattern_expression,
     _float_text_default,
     _parse_float_input,
     _parse_float_list,
-    _random_pattern_example,
     build_dual_section_html,
     build_dual_series_data,
-    clamp_value,
     clear_algorithm_caches,
     compute,
     dual_ranking_by_slice,
-    value_index,
 )
 
 
@@ -482,9 +477,16 @@ def render_loading_phase(algo_key: str, spec):
     st.session_state[_runs_key(algo_key)] = []
     st.session_state[_run_counter_key(algo_key)] = 0
     st.session_state.pop(_last_recompute_event_key(algo_key), None)
+    st.session_state.pop(_last_cursor_event_key(algo_key), None)
+    st.session_state.pop(_last_metric_event_key(algo_key), None)
+    st.session_state.pop(_last_remove_event_key(algo_key), None)
     st.session_state[f"dual_selected_{algo_key}"] = []
     st.session_state[f"gamma_slider_{algo_key}"] = float(gamma_spec.min_value)
     st.session_state[f"n_slider_{algo_key}"] = float(n_spec.min_value)
+    st.session_state[f"gamma_idx_{algo_key}"] = 0
+    st.session_state[f"n_idx_{algo_key}"] = 0
+    st.session_state[f"tau_pattern_gamma_{algo_key}"] = ""
+    st.session_state[f"tau_pattern_n_{algo_key}"] = ""
     st.rerun()
 
 
@@ -510,6 +512,8 @@ def render_results_phase(algo_key: str, spec):
     gamma_values, n_values, tau_grid, cached_warnings, duals_grid = result
     gamma_spec = settings["gamma_spec"]
     n_spec = settings["n_spec"]
+    pattern_gamma_key = f"tau_pattern_gamma_{algo_key}"
+    pattern_n_key = f"tau_pattern_n_{algo_key}"
 
     st.subheader(f"Results for `{spec.name}`")
     if st.button("Change gamma/n settings"):
@@ -531,107 +535,17 @@ def render_results_phase(algo_key: str, spec):
                 st.markdown(f"*params*: {params_line}")
             else:
                 st.markdown("*params*: `{}`")
-
-    gamma_slider_key = f"gamma_slider_{algo_key}"
-    n_slider_key = f"n_slider_{algo_key}"
-    st.session_state.setdefault(gamma_slider_key, float(gamma_spec.min_value))
-    st.session_state.setdefault(n_slider_key, float(n_spec.min_value))
-
-    st.session_state[gamma_slider_key] = clamp_value(float(st.session_state[gamma_slider_key]), gamma_spec)
-    st.session_state[n_slider_key] = clamp_value(float(st.session_state[n_slider_key]), n_spec)
-    col1, col2 = st.columns(2)
-
-    pattern_gamma_key = f"tau_pattern_gamma_{algo_key}"
-    pattern_n_key = f"tau_pattern_n_{algo_key}"
+    gamma_idx_key = f"gamma_idx_{algo_key}"
+    n_idx_key = f"n_idx_{algo_key}"
+    gamma_idx = int(st.session_state.get(gamma_idx_key, 0))
+    n_idx = int(st.session_state.get(n_idx_key, 0))
+    gamma_idx = max(0, min(gamma_idx, len(gamma_values) - 1))
+    n_idx = max(0, min(n_idx, len(n_values) - 1))
+    st.session_state[gamma_idx_key] = gamma_idx
+    st.session_state[n_idx_key] = n_idx
     st.session_state.setdefault(pattern_gamma_key, "")
     st.session_state.setdefault(pattern_n_key, "")
-    gamma_overlay_values = None
-    n_overlay_values = None
     base_param_values, invalid_params, conflict_params = _build_pattern_param_values(settings["function_config"])
-    if base_param_values:
-        params_hint = ", ".join(f"{name}={value:g}" for name, value in sorted(base_param_values.items()))
-    else:
-        params_hint = "none"
-    hint_parts = [f"Available parameters: {params_hint} "]
-    if invalid_params:
-        hint_parts.append(f"Ignored (non-scalar): {', '.join(invalid_params)}.")
-    if conflict_params:
-        hint_parts.append(f"Conflicts: {', '.join(conflict_params)}.")
-    params_hint_text = " ".join(hint_parts)
-
-    with col1:
-        with st.container(border=True):
-            # gamma slider
-            gamma_value = st.slider(
-                "gamma",
-                float(gamma_spec.min_value),
-                float(gamma_spec.max_value),
-                step=float(gamma_spec.step),
-                key=gamma_slider_key,
-            )
-
-            # tau vs gamma hypothesis
-            gamma_pattern = st.text_input(
-                "pattern hypothesis",
-                key=pattern_gamma_key,
-                placeholder=_random_pattern_example(),
-            )
-            st.caption(f"{params_hint_text} and n (current slider value).")
-            gamma_param_values = dict(base_param_values)
-            gamma_param_values["n"] = float(st.session_state[n_slider_key])
-            gamma_overlay_values, gamma_error = _evaluate_pattern_expression(
-                gamma_pattern,
-                gamma_values,
-                gamma_param_values,
-                ("x", "gamma"),
-            )
-            if gamma_error:
-                st.error(gamma_error)
-    with col2:
-        with st.container(border=True):
-            # n slider
-            if n_spec.value_type == "int":
-                st.session_state[n_slider_key] = int(round(st.session_state[n_slider_key]))
-                n_value_raw = st.slider(
-                    "n",
-                    int(n_spec.min_value),
-                    int(n_spec.max_value),
-                    step=int(max(1, n_spec.step)),
-                    key=n_slider_key,
-                )
-                n_value = float(n_value_raw)
-            else:
-                n_value = st.slider(
-                    "n",
-                    float(n_spec.min_value),
-                    float(n_spec.max_value),
-                    step=float(n_spec.step),
-                    key=n_slider_key,
-                )
-
-            # tau vs n hypothesis
-            n_pattern = st.text_input(
-                "pattern hypothesis",
-                key=pattern_n_key,
-                placeholder=_random_pattern_example(),
-            )
-            st.caption(f"{params_hint_text} and gamma (current slider value).")
-            n_param_values = dict(base_param_values)
-            n_param_values["gamma"] = float(st.session_state[gamma_slider_key])
-            n_overlay_values, n_error = _evaluate_pattern_expression(
-                n_pattern,
-                n_values,
-                n_param_values,
-                ("x", "n"),
-            )
-            if n_error:
-                st.error(n_error)
-
-    gamma_idx = value_index(float(gamma_value), gamma_spec)
-    n_idx = value_index(float(n_value), n_spec)
-    tau_gamma = tau_grid[:, n_idx]
-    tau_n = tau_grid[gamma_idx, :]
-    current_tau = tau_grid[gamma_idx, n_idx]
     warning_messages = set(cached_warnings)
     runs = st.session_state.setdefault(_runs_key(algo_key), [])
     run_results: dict[str, tuple] = {}
@@ -649,140 +563,19 @@ def render_results_phase(algo_key: str, spec):
             selected_dual_series_ids=selected_series_ids,
         )
         run_results[run["id"]] = run_result
+        if isinstance(run_result, tuple) and len(run_result) >= 4:
+            for warning in run_result[3]:
+                warning_messages.add(f"{run['name']}: {warning}")
 
-    gamma_fig = go.Figure()
-    gamma_fig.add_trace(
-        go.Scatter(
-            x=gamma_values,
-            y=tau_gamma,
-            mode="lines",
-            line={"color": "#9aa0a6", "width": 2},
-            hovertemplate="gamma=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>",
-        )
-    )
-    if gamma_overlay_values is not None and not gamma_error:
-        gamma_fig.add_trace(
-            go.Scatter(
-                x=gamma_values,
-                y=gamma_overlay_values,
-                mode="lines",
-                line={"color": "#ff8a00", "width": 2},
-                hovertemplate="gamma=%{x:.3f}<br>pattern=%{y:.3e}<extra></extra>",
-                showlegend=False,
-            )
-        )
-    if current_tau is not None and np.isfinite(current_tau):
-        gamma_fig.add_trace(
-            go.Scatter(
-                x=[gamma_value],
-                y=[current_tau],
-                mode="markers",
-                marker={"size": 12},
-                hovertemplate="gamma=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>",
-                name="current",
-            )
-        )
-    for run in runs:
-        if not run.get("visible", True):
-            continue
-        run_result = run_results.get(run["id"])
-        if run_result is None:
-            warning_messages.add(f"{run['name']}: recomputed data unavailable in cache.")
-            continue
-        run_tau_grid = run_result[2]
-        run_warnings = run_result[3]
-        for warning in run_warnings:
-            warning_messages.add(f"{run['name']}: {warning}")
-        gamma_fig.add_trace(
-            go.Scatter(
-                x=gamma_values,
-                y=run_tau_grid[:, n_idx],
-                mode="lines",
-                line={"color": run["color"], "width": 2},
-                hovertemplate=f"gamma=%{{x:.3f}}<br>{run['name']}=%{{y:.3e}}<extra></extra>",
-                showlegend=False,
-            )
-        )
-    gamma_fig.update_layout(
-        showlegend=False,
-        title={"text": "Tau vs gamma", "pad": {"t": 6, "b": 0}},
-        xaxis_title="gamma",
-        yaxis_title="tau",
-        height=320,
-        margin={"t": 30, "l": 50, "r": 20, "b": 10},
-    )
-
-    n_fig = go.Figure()
-    n_fig.add_trace(
-        go.Scatter(
-            x=n_values,
-            y=tau_n,
-            mode="lines",
-            line={"color": "#9aa0a6", "width": 2},
-            hovertemplate="n=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>",
-        )
-    )
-    if n_overlay_values is not None and not n_error:
-        n_fig.add_trace(
-            go.Scatter(
-                x=n_values,
-                y=n_overlay_values,
-                mode="lines",
-                line={"color": "#ff8a00", "width": 2},
-                hovertemplate="n=%{x:.3f}<br>pattern=%{y:.3e}<extra></extra>",
-                showlegend=False,
-            )
-        )
-    if current_tau is not None and np.isfinite(current_tau):
-        n_fig.add_trace(
-            go.Scatter(
-                x=[n_value],
-                y=[current_tau],
-                mode="markers",
-                marker={"size": 12},
-                hovertemplate="n=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>",
-            )
-        )
-    for run in runs:
-        if not run.get("visible", True):
-            continue
-        run_result = run_results.get(run["id"])
-        if run_result is None:
-            continue
-        run_tau_grid = run_result[2]
-        n_fig.add_trace(
-            go.Scatter(
-                x=n_values,
-                y=run_tau_grid[gamma_idx, :],
-                mode="lines",
-                line={"color": run["color"], "width": 2},
-                hovertemplate=f"n=%{{x:.3f}}<br>{run['name']}=%{{y:.3e}}<extra></extra>",
-                showlegend=False,
-            )
-        )
-    n_fig.update_layout(
-        showlegend=False,
-        title={"text": "Tau vs n", "pad": {"t": 6, "b": 0}},
-        xaxis_title="n",
-        yaxis_title="tau",
-        height=320,
-        margin={"t": 30, "l": 50, "r": 20, "b": 10},
-    )
-
-    with col1:
-        with st.container(border=True):
-            st.plotly_chart(gamma_fig)
-    with col2:
-        with st.container(border=True):
-            st.plotly_chart(n_fig)
+    tau_grid_payload = [
+        [float(value) if value is not None and np.isfinite(value) else None for value in row] for row in tau_grid
+    ]
 
     if warning_messages:
         warning_text = "\n".join(sorted(warning_messages))
         st.warning(
             "Some parameter combinations could not be solved; missing points are shown as gaps.\n" + warning_text
         )
-
-    render_recompute_runs_panel(algo_key)
 
     event = render_dual_values_panel(
         algo_key,
@@ -793,42 +586,109 @@ def render_results_phase(algo_key: str, spec):
         n_idx,
         runs,
         run_results,
+        tau_payload={
+            "gamma_values": [float(value) for value in gamma_values],
+            "n_values": [float(value) for value in n_values],
+            "gamma_spec": {
+                "min": float(gamma_spec.min_value),
+                "max": float(gamma_spec.max_value),
+                "step": float(gamma_spec.step),
+                "value_type": str(gamma_spec.value_type),
+            },
+            "n_spec": {
+                "min": float(n_spec.min_value),
+                "max": float(n_spec.max_value),
+                "step": float(n_spec.step),
+                "value_type": str(n_spec.value_type),
+            },
+            "tau_grid": tau_grid_payload,
+            "default_gamma_idx": gamma_idx,
+            "default_n_idx": n_idx,
+            "pattern_gamma": str(st.session_state.get(pattern_gamma_key, "")),
+            "pattern_n": str(st.session_state.get(pattern_n_key, "")),
+            "pattern_params": {name: float(value) for name, value in sorted(base_param_values.items())},
+            "pattern_invalid_params": [str(name) for name in invalid_params],
+            "pattern_conflict_params": [str(name) for name in conflict_params],
+        },
     )
     if event:
+        event_type = str(event.get("type", ""))
         event_id = str(event.get("request_id", ""))
         last_event_key = _last_recompute_event_key(algo_key)
-        if event_id and st.session_state.get(last_event_key) != event_id:
-            selected_series_ids = tuple(sorted(set(event.get("selected_series_ids", []))))
-            selected_labels = list(event.get("selected_labels", []))
-            st.session_state[f"dual_selected_{algo_key}"] = list(selected_series_ids)
-            if selected_series_ids:
-                with st.spinner("Recomputing tau grid with selected dual values..."):
-                    recompute_result = compute(
-                        algo_key,
-                        settings["gamma_spec"],
-                        settings["n_spec"],
-                        settings["function_config"],
-                        show_progress=True,
-                        rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
-                        selected_dual_series_ids=selected_series_ids,
-                    )
-                if recompute_result is None:
-                    st.error("Unable to recompute tau grid for selected dual values.")
-                else:
-                    next_index = int(st.session_state.setdefault(_run_counter_key(algo_key), 0)) + 1
-                    st.session_state[_run_counter_key(algo_key)] = next_index
-                    runs.append(
-                        {
-                            "id": f"run-{next_index}",
-                            "name": f"Run {next_index}",
-                            "color": RUN_COLORS[(next_index - 1) % len(RUN_COLORS)],
-                            "selected_series_ids": list(selected_series_ids),
-                            "selected_labels": selected_labels,
-                            "visible": True,
-                        }
-                    )
-            st.session_state[last_event_key] = event_id
-            st.rerun()
+        if event_type == "cursor":
+            cursor_event_key = _last_cursor_event_key(algo_key)
+            if event_id and st.session_state.get(cursor_event_key) != event_id:
+                next_gamma_idx = int(event.get("gamma_idx", gamma_idx))
+                next_n_idx = int(event.get("n_idx", n_idx))
+                st.session_state[pattern_gamma_key] = str(event.get("pattern_gamma", ""))
+                st.session_state[pattern_n_key] = str(event.get("pattern_n", ""))
+                st.session_state[gamma_idx_key] = max(0, min(next_gamma_idx, len(gamma_values) - 1))
+                st.session_state[n_idx_key] = max(0, min(next_n_idx, len(n_values) - 1))
+                st.session_state[cursor_event_key] = event_id
+                st.rerun()
+        elif event_type == "metric":
+            metric_event_key = _last_metric_event_key(algo_key)
+            if event_id and st.session_state.get(metric_event_key) != event_id:
+                requested_metric = str(event.get("metric", ""))
+                allowed_metrics = {
+                    "non_zero_pct",
+                    "non_zero_pct_with_none",
+                    "std",
+                    "std_with_none",
+                    "median_abs",
+                    "median_abs_with_none",
+                    "mean_abs",
+                    "mean_abs_with_none",
+                }
+                if requested_metric in allowed_metrics:
+                    st.session_state[f"dual-ranking-metric-{algo_key}"] = requested_metric
+                st.session_state[metric_event_key] = event_id
+                st.rerun()
+        elif event_type == "remove_run":
+            remove_event_key = _last_remove_event_key(algo_key)
+            if event_id and st.session_state.get(remove_event_key) != event_id:
+                run_id = str(event.get("run_id", ""))
+                st.session_state[pattern_gamma_key] = str(event.get("pattern_gamma", ""))
+                st.session_state[pattern_n_key] = str(event.get("pattern_n", ""))
+                if run_id:
+                    runs[:] = [run for run in runs if str(run.get("id", "")) != run_id]
+                st.session_state[remove_event_key] = event_id
+                st.rerun()
+        elif event_id and st.session_state.get(last_event_key) != event_id:
+            if event_type == "recompute":
+                selected_series_ids = tuple(sorted(set(event.get("selected_series_ids", []))))
+                selected_labels = list(event.get("selected_labels", []))
+                st.session_state[pattern_gamma_key] = str(event.get("pattern_gamma", ""))
+                st.session_state[pattern_n_key] = str(event.get("pattern_n", ""))
+                st.session_state[f"dual_selected_{algo_key}"] = list(selected_series_ids)
+                if selected_series_ids:
+                    with st.spinner("Recomputing tau grid with selected dual values..."):
+                        recompute_result = compute(
+                            algo_key,
+                            settings["gamma_spec"],
+                            settings["n_spec"],
+                            settings["function_config"],
+                            show_progress=True,
+                            rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
+                            selected_dual_series_ids=selected_series_ids,
+                        )
+                    if recompute_result is None:
+                        st.error("Unable to recompute tau grid for selected dual values.")
+                    else:
+                        next_index = int(st.session_state.setdefault(_run_counter_key(algo_key), 0)) + 1
+                        st.session_state[_run_counter_key(algo_key)] = next_index
+                        runs.append(
+                            {
+                                "id": f"run-{next_index}",
+                                "name": f"Run {next_index}",
+                                "color": RUN_COLORS[(next_index - 1) % len(RUN_COLORS)],
+                                "selected_series_ids": list(selected_series_ids),
+                                "selected_labels": selected_labels,
+                                "visible": True,
+                            }
+                        )
+                st.session_state[last_event_key] = event_id
+                st.rerun()
 
 
 DUAL_BUTTON_MIN_WIDTH = 70
@@ -840,11 +700,10 @@ UI_DIR = Path(__file__).resolve().parent / "ui"
 DUAL_PANEL_CSS = (UI_DIR / "dual_panel.css").read_text()
 DUAL_PANEL_V2_JS = (UI_DIR / "dual_panel_v2.js").read_text()
 RUN_COLORS = (
-    "#f97316",
     "#0ea5e9",
     "#14b8a6",
     "#e11d48",
-    "#f59e0b",
+    "#f4ec0b",
     "#22c55e",
     "#ef4444",
     "#3b82f6",
@@ -883,6 +742,18 @@ def _last_recompute_event_key(algo_key: str) -> str:
     return f"recompute_event_{algo_key}"
 
 
+def _last_cursor_event_key(algo_key: str) -> str:
+    return f"cursor_event_{algo_key}"
+
+
+def _last_metric_event_key(algo_key: str) -> str:
+    return f"metric_event_{algo_key}"
+
+
+def _last_remove_event_key(algo_key: str) -> str:
+    return f"remove_run_event_{algo_key}"
+
+
 def render_dual_values_panel(
     algo_key: str,
     duals_grid: list[list[dict]],
@@ -892,8 +763,8 @@ def render_dual_values_panel(
     n_idx: int,
     runs: list[dict],
     run_results: dict[str, tuple],
+    tau_payload: dict,
 ) -> dict | None:
-    st.subheader("Dual values")
     if not duals_grid:
         st.caption("No dual values available for these settings.")
         return None
@@ -907,15 +778,12 @@ def render_dual_values_panel(
         "mean_abs": "Average |x|",
         "mean_abs_with_none": "Average |x| (None=0)",
     }
-    metric_col, _ = st.columns([1, 5])
-    with metric_col:
-        metric = st.selectbox(
-            "Ranking metric",
-            list(metric_labels.keys()),
-            format_func=lambda key: metric_labels.get(key, key),
-            index=list(metric_labels.keys()).index("non_zero_pct_with_none"),
-            key=f"dual-ranking-metric-{algo_key}",
-        )
+    metric_state_key = f"dual-ranking-metric-{algo_key}"
+    st.session_state.setdefault(metric_state_key, "non_zero_pct_with_none")
+    metric = str(st.session_state.get(metric_state_key, "non_zero_pct_with_none"))
+    if metric not in metric_labels:
+        metric = "non_zero_pct_with_none"
+        st.session_state[metric_state_key] = metric
 
     current_duals = duals_grid[gamma_idx][n_idx] if duals_grid else {}
     gamma_slice = [row[n_idx] for row in duals_grid]
@@ -953,8 +821,6 @@ def render_dual_values_panel(
     selected_series_ids = st.session_state.get(f"dual_selected_{algo_key}", [])
     dual_runs_data: list[dict] = []
     for run in runs:
-        if not run.get("visible", True):
-            continue
         run_result = run_results.get(run["id"])
         if run_result is None:
             continue
@@ -971,13 +837,20 @@ def render_dual_values_panel(
                 "id": run["id"],
                 "name": run["name"],
                 "color": run["color"],
+                "visible": bool(run.get("visible", True)),
+                "selected_labels": [str(label) for label in run.get("selected_labels", [])],
+                "tau_grid": [
+                    [float(value) if value is not None and np.isfinite(value) else None for value in row]
+                    for row in run_result[2]
+                ],
                 "series_data": run_series_data,
             }
         )
     result = DUAL_PANEL_COMPONENT(
-        key=f"dual-panel-{algo_key}-{gamma_idx}-{n_idx}",
+        key=f"dual-panel-{algo_key}",
         data={
             "css": _format_dual_panel_css(),
+            "tau_payload": tau_payload,
             "series_data": series_data,
             "dual_runs": dual_runs_data,
             "gamma_html": gamma_html,
@@ -985,6 +858,8 @@ def render_dual_values_panel(
             "plot_title_gamma": gamma_plot_title,
             "plot_title_n": n_plot_title,
             "selected_series_ids": selected_series_ids,
+            "metric": metric,
+            "metric_labels": metric_labels,
         },
         height="content",
         isolate_styles=False,
@@ -992,36 +867,16 @@ def render_dual_values_panel(
     )
     if result is None:
         return None
+    cursor = result.get("cursor")
+    if isinstance(cursor, dict):
+        return {"type": "cursor", **cursor}
+    metric_change = result.get("metric")
+    if isinstance(metric_change, dict):
+        return {"type": "metric", **metric_change}
+    remove_run = result.get("remove_run")
+    if isinstance(remove_run, dict):
+        return {"type": "remove_run", **remove_run}
     recompute = result.get("recompute")
-    return recompute if isinstance(recompute, dict) else None
-
-
-def render_recompute_runs_panel(algo_key: str) -> None:
-    st.subheader("Recompute Runs")
-    runs = st.session_state.setdefault(_runs_key(algo_key), [])
-    with st.container(border=True):
-        st.markdown("`Baseline`")
-        st.caption("View duals: All")
-
-    for run in runs:
-        run_id = run["id"]
-        show_key = f"run-visible-{algo_key}-{run_id}"
-        st.session_state.setdefault(show_key, bool(run.get("visible", True)))
-        row_col, control_col = st.columns([4, 1])
-        with row_col:
-            swatch = (
-                f"<span style='display:inline-block;width:10px;height:10px;border-radius:2px;"
-                f"background:{run['color']};margin-right:8px;'></span>"
-            )
-            st.markdown(f"{swatch}`{run['name']}`", unsafe_allow_html=True)
-            run["visible"] = bool(st.checkbox("Show", key=show_key))
-        with control_col:
-            if st.button("Remove", key=f"run-remove-{algo_key}-{run_id}"):
-                runs[:] = [candidate for candidate in runs if candidate["id"] != run_id]
-                st.rerun()
-        with st.expander(f"View duals for {run['name']}"):
-            labels = [str(label) for label in run.get("selected_labels", [])]
-            if labels:
-                st.markdown(" , ".join(f"`{label}`" for label in labels))
-            else:
-                st.caption("No dual values selected.")
+    if isinstance(recompute, dict):
+        return {"type": "recompute", **recompute}
+    return None
