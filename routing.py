@@ -681,7 +681,6 @@ def render_results_phase(algo_key: str, spec):
                             {
                                 "id": f"run-{next_index}",
                                 "name": f"Run {next_index}",
-                                "color": RUN_COLORS[(next_index - 1) % len(RUN_COLORS)],
                                 "selected_series_ids": list(selected_series_ids),
                                 "selected_labels": selected_labels,
                                 "visible": True,
@@ -691,36 +690,9 @@ def render_results_phase(algo_key: str, spec):
                 st.rerun()
 
 
-DUAL_BUTTON_MIN_WIDTH = 70
-DUAL_BUTTON_MAX_WIDTH = 100
-DUAL_PLOT_HEIGHT = 100
-DUAL_PLOT_MIN_WIDTH = 220
-
 UI_DIR = Path(__file__).resolve().parent / "ui"
 DUAL_PANEL_CSS = (UI_DIR / "dual_panel.css").read_text()
-DUAL_PANEL_V2_JS = (UI_DIR / "dual_panel_v2.js").read_text()
-RUN_COLORS = (
-    "#0ea5e9",
-    "#14b8a6",
-    "#e11d48",
-    "#f4ec0b",
-    "#22c55e",
-    "#ef4444",
-    "#3b82f6",
-    "#84cc16",
-    "#a855f7",
-)
-
-
-def _format_dual_panel_css() -> str:
-    plot_card_title_px = max(11, min(14, DUAL_PLOT_HEIGHT // 15))
-    css = DUAL_PANEL_CSS
-    css = css.replace("{{PLOT_MIN_WIDTH}}", str(DUAL_PLOT_MIN_WIDTH))
-    css = css.replace("{{PLOT_HEIGHT}}", str(DUAL_PLOT_HEIGHT))
-    css = css.replace("{{PLOT_CARD_TITLE_PX}}", str(plot_card_title_px))
-    css = css.replace("{{BUTTON_MIN_WIDTH}}", str(DUAL_BUTTON_MIN_WIDTH))
-    css = css.replace("{{BUTTON_MAX_WIDTH}}", str(DUAL_BUTTON_MAX_WIDTH))
-    return css
+DUAL_PANEL_V2_JS = (UI_DIR / "dual_panel.js").read_text()
 
 
 DUAL_PANEL_COMPONENT = components_v2.component(
@@ -806,7 +778,6 @@ def render_dual_values_panel(
         title=gamma_ranking_title,
         dual_ranking=gamma_ranking,
         current_duals=current_duals,
-        min_width=DUAL_BUTTON_MIN_WIDTH,
     )
     n_html, _ = build_dual_section_html(
         section_id=f"{algo_key}-n",
@@ -814,7 +785,6 @@ def render_dual_values_panel(
         title=n_ranking_title,
         dual_ranking=n_ranking,
         current_duals=current_duals,
-        min_width=DUAL_BUTTON_MIN_WIDTH,
     )
     gamma_plot_title = f"Dual value vs gamma (n = {n_values[n_idx]})"
     n_plot_title = f"Dual value vs n (gamma = {gamma_values[gamma_idx]})"
@@ -836,7 +806,6 @@ def render_dual_values_panel(
             {
                 "id": run["id"],
                 "name": run["name"],
-                "color": run["color"],
                 "visible": bool(run.get("visible", True)),
                 "selected_labels": [str(label) for label in run.get("selected_labels", [])],
                 "tau_grid": [
@@ -849,7 +818,7 @@ def render_dual_values_panel(
     result = DUAL_PANEL_COMPONENT(
         key=f"dual-panel-{algo_key}",
         data={
-            "css": _format_dual_panel_css(),
+            "css": DUAL_PANEL_CSS,
             "tau_payload": tau_payload,
             "series_data": series_data,
             "dual_runs": dual_runs_data,

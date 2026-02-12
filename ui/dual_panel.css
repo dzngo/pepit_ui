@@ -1,9 +1,9 @@
 :root {
   --st-font: "Source Sans Pro", "Source Sans 3", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
-  --dual-button-min-width: {{BUTTON_MIN_WIDTH}}px;
-  --dual-button-max-width: {{BUTTON_MAX_WIDTH}}px;
-  --dual-plot-min-width: {{PLOT_MIN_WIDTH}}px;
+  --dual-button-min-width: 70px;
+  --dual-button-max-width: 100px;
+  --dual-plot-min-width: 220px;
 }
 .dual-wrapper {
   display: flex;
@@ -159,10 +159,10 @@
 .dual-plot-card-title {
   font-weight: 600;
   margin-bottom: 6px;
-  font-size: {{PLOT_CARD_TITLE_PX}}px;
+  font-size: 11px;
 }
 .dual-plot-chart {
-  min-height: {{PLOT_HEIGHT}}px;
+  min-height: 100px;
   width: 100%;
   height: 100%;
 }
@@ -185,7 +185,8 @@
 .dual-button {
   border: none;
   font-weight: 600;
-  padding: 8px 12px;
+  font-size: 14px;
+  padding: 8px 8px;
   border-radius: 8px;
   min-width: var(--dual-button-min-width);
   max-width: var(--dual-button-max-width);

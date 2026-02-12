@@ -3,6 +3,7 @@ import html
 import pickle
 import random
 import time
+from decimal import ROUND_HALF_UP, Decimal
 from math import isfinite
 from pathlib import Path
 from typing import Dict, Tuple
@@ -51,8 +52,11 @@ def slider_for_param(
 
 
 def discrete_values(param: HyperparameterSpec) -> np.ndarray:
-    steps = int(round((param.max_value - param.min_value) / param.step))
-    values = np.array([param.min_value + i * param.step for i in range(steps + 1)], dtype=float)
+    min_value = Decimal(str(param.min_value))
+    max_value = Decimal(str(param.max_value))
+    step = Decimal(str(param.step))
+    steps = int(((max_value - min_value) / step).to_integral_value(rounding=ROUND_HALF_UP))
+    values = np.array([float(min_value + Decimal(i) * step) for i in range(steps + 1)], dtype=float)
     if param.value_type == "int":
         values = np.round(values).astype(int)
     return values
@@ -517,7 +521,6 @@ def build_dual_section_html(
     title: str,
     dual_ranking: dict,
     current_duals: dict,
-    min_width: int,
 ) -> tuple[str, int]:
     if not dual_ranking:
         return f"<div class='dual-section-title'>{html_escape(title)}</div><div>No data.</div>", 0
