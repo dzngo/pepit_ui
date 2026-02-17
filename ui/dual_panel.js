@@ -8,13 +8,15 @@ export default function(component) {
   const metricKeys = Object.keys(metricLabels);
   const currentMetric = (data && data.metric) || 'non_zero_pct_with_none';
 
-  const selected = new Map();
+  const plotSelectionMap = new Map();
+  const deactivatedForRecompute = new Map();
   const selectedPlotCards = { gamma: new Set(), n: new Set() };
   const overlayState = new Map();
   const overlayDebounce = new Map();
   const dualTraceRegistry = new Map();
   const tauTraceRegistry = { gamma: new Map(), n: new Map() };
   let hideZero = true;
+  let actionTab = 'plot';
 
   const gammaValues = Array.isArray(tauPayload.gamma_values) ? tauPayload.gamma_values : [];
   const nValues = Array.isArray(tauPayload.n_values) ? tauPayload.n_values : [];
@@ -180,7 +182,7 @@ export default function(component) {
             `</div>` +
           `</div>` +
           `<details style="margin-top:8px;">` +
-            `<summary style="cursor:pointer;font-weight:600;">View duals (${labels.length})</summary>` +
+            `<summary style="cursor:pointer;font-weight:600;">View deactivated duals (${labels.length})</summary>` +
             `<div class="dual-selected-list" style="margin-top:8px;">${dualBadges}</div>` +
           `</details>` +
         `</div>`
@@ -246,10 +248,44 @@ export default function(component) {
       </div>
       <div class="dual-panel"><div class="dual-section">${data.gamma_html || ''}</div></div>
       <div class="dual-panel"><div class="dual-section">${data.n_html || ''}</div></div>
-      <div class="dual-plot-actions">
-        <button type="button" class="dual-plot-button" id="dual-plot">Plot dual values</button>
-        <button type="button" class="dual-overlay-button" id="dual-overlay" style="display:none;">Overlay plot</button>
-        <button type="button" class="dual-clear-button" id="dual-clear">Select all</button>
+      <div class="dual-tabs" role="tablist" aria-label="Dual action tabs">
+        <button
+          type="button"
+          class="dual-tab is-active"
+          id="tab-plot"
+          role="tab"
+          aria-selected="true"
+          aria-controls="tab-panel-plot"
+        >
+          Plot
+        </button>
+        <button
+          type="button"
+          class="dual-tab"
+          id="tab-recompute"
+          role="tab"
+          aria-selected="false"
+          aria-controls="tab-panel-recompute"
+          tabindex="-1"
+        >
+          Recompute
+        </button>
+      </div>
+      <div id="tab-panel-plot" class="dual-tabpanel" role="tabpanel" aria-labelledby="tab-plot">
+        <div class="dual-plot-actions">
+          <button type="button" class="dual-plot-button" id="dual-plot">Plot dual values</button>
+          <button type="button" class="dual-overlay-button" id="dual-overlay" style="display:none;">Overlay plot</button>
+          <button type="button" class="dual-clear-button" id="dual-clear">Select all</button>
+        </div>
+      </div>
+      <div id="tab-panel-recompute" class="dual-tabpanel" role="tabpanel" aria-labelledby="tab-recompute" hidden>
+        <div class="dual-selected-header"><div class="dual-selected-title">Deactivated dual values</div></div>
+        <div id="dual-deactivated-list" class="dual-selected-list">None</div>
+        <div class="dual-plot-actions dual-plot-actions-inline dual-recompute-actions">
+          <button type="button" class="dual-plot-button" id="dual-recompute" disabled>Recompute</button>
+          <button type="button" class="dual-clear-button" id="dual-activate-all">Activate all</button>
+          <button type="button" class="dual-toggle-button is-active" id="dual-deactivate-all">Deactivate all</button>
+        </div>
       </div>
       <div class="dual-panel">
         <div class="dual-plot-section">
@@ -269,23 +305,24 @@ export default function(component) {
           </div>
         </div>
       </div>
-      <div class="dual-selected-header"><div class="dual-selected-title">Selected dual values</div></div>
-      <div id="dual-selected-list" class="dual-selected-list">None</div>
-      <div class="dual-plot-actions dual-plot-actions-inline">
-        <button type="button" class="dual-plot-button" id="dual-recompute" disabled>Recompute</button>
-      </div>
     </div>
   `;
 
   const root = parentElement;
-  const listEl = root.querySelector('#dual-selected-list');
+  const deactivatedListEl = root.querySelector('#dual-deactivated-list');
   const toggleBtn = root.querySelector('#dual-toggle-zero');
+  const tabPlotBtn = root.querySelector('#tab-plot');
+  const tabRecomputeBtn = root.querySelector('#tab-recompute');
+  const tabPanelPlot = root.querySelector('#tab-panel-plot');
+  const tabPanelRecompute = root.querySelector('#tab-panel-recompute');
   const plotBtn = root.querySelector('#dual-plot');
   const overlayBtn = root.querySelector('#dual-overlay');
   const clearBtn = root.querySelector('#dual-clear');
   const removeGammaBtn = root.querySelector('#dual-remove-gamma');
   const removeNBtn = root.querySelector('#dual-remove-n');
   const recomputeBtn = root.querySelector('#dual-recompute');
+  const activateAllBtn = root.querySelector('#dual-activate-all');
+  const deactivateAllBtn = root.querySelector('#dual-deactivate-all');
   const tauGammaSlider = root.querySelector('#tau-gamma-slider');
   const tauNSlider = root.querySelector('#tau-n-slider');
   const tauGammaValue = root.querySelector('#tau-gamma-value');
@@ -303,25 +340,56 @@ export default function(component) {
   let lastCursorEventKey = `${gammaIdx}:${nIdx}`;
 
   function visibleButtons() {
-    return Array.from(root.querySelectorAll('.dual-button:not(.is-hidden)'));
+    return Array.from(root.querySelectorAll('.dual-button:not(.is-hidden):not(.is-recompute-hidden)'));
   }
 
-  function setButtonsSelected(seriesId, isSelected) {
+  function updateDeactivatedList() {
+    if (!deactivatedListEl) return;
+    if (!deactivatedForRecompute.size) {
+      deactivatedListEl.textContent = 'None';
+      if (recomputeBtn) {
+        recomputeBtn.disabled = true;
+        recomputeBtn.style.display = 'none';
+      }
+      return;
+    }
+    deactivatedListEl.innerHTML = Array.from(deactivatedForRecompute.entries()).map(([seriesId, label]) => (
+      `<button type="button" class="dual-badge dual-reactivate-button" data-series-id="${escapeHtml(seriesId)}">${formatDualLabel(label)}</button>`
+    )).join('');
+    if (recomputeBtn) {
+      recomputeBtn.disabled = false;
+      recomputeBtn.style.display = 'inline-flex';
+    }
+  }
+
+  function syncDualButtonState() {
     root.querySelectorAll('.dual-button').forEach((btn) => {
-      if (btn.getAttribute('data-series-id') !== seriesId) return;
-      btn.classList.toggle('is-clicked', isSelected);
+      const seriesId = btn.getAttribute('data-series-id');
+      const hideByTab = actionTab === 'recompute' && deactivatedForRecompute.has(seriesId);
+      const selectedForPlot = actionTab === 'plot' && plotSelectionMap.has(seriesId);
+      btn.classList.toggle('is-clicked', selectedForPlot);
+      btn.classList.toggle('is-recompute-hidden', hideByTab);
     });
   }
 
-  function updateList() {
-    if (!listEl) return;
-    if (!selected.size) {
-      listEl.textContent = 'None';
-      if (recomputeBtn) recomputeBtn.disabled = true;
-      return;
+  function setActionTab(nextTab) {
+    actionTab = nextTab === 'recompute' ? 'recompute' : 'plot';
+    if (tabPlotBtn) {
+      const active = actionTab === 'plot';
+      tabPlotBtn.classList.toggle('is-active', active);
+      tabPlotBtn.setAttribute('aria-selected', active ? 'true' : 'false');
+      tabPlotBtn.tabIndex = active ? 0 : -1;
     }
-    listEl.innerHTML = Array.from(selected.values()).map((txt) => `<span class="dual-badge">${formatDualLabel(txt)}</span>`).join('');
-    if (recomputeBtn) recomputeBtn.disabled = false;
+    if (tabRecomputeBtn) {
+      const active = actionTab === 'recompute';
+      tabRecomputeBtn.classList.toggle('is-active', active);
+      tabRecomputeBtn.setAttribute('aria-selected', active ? 'true' : 'false');
+      tabRecomputeBtn.tabIndex = active ? 0 : -1;
+    }
+    if (tabPanelPlot) tabPanelPlot.hidden = actionTab !== 'plot';
+    if (tabPanelRecompute) tabPanelRecompute.hidden = actionTab !== 'recompute';
+    syncDualButtonState();
+    updateClearButton();
   }
 
   function updateClearButton() {
@@ -332,7 +400,7 @@ export default function(component) {
       return;
     }
     const visibleSeries = new Set(buttons.map((btn) => btn.getAttribute('data-series-id')));
-    const allSelected = Array.from(visibleSeries).every((id) => selected.has(id));
+    const allSelected = Array.from(visibleSeries).every((id) => plotSelectionMap.has(id));
     clearBtn.textContent = allSelected ? 'Deselect all' : 'Select all';
   }
 
@@ -741,14 +809,13 @@ export default function(component) {
 
   function removeSelectedSeries(seriesIds) {
     seriesIds.forEach((seriesId) => {
-      if (selected.has(seriesId)) {
-        selected.delete(seriesId);
-        setButtonsSelected(seriesId, false);
+      if (plotSelectionMap.has(seriesId)) {
+        plotSelectionMap.delete(seriesId);
       }
     });
     selectedPlotCards.gamma.clear();
     selectedPlotCards.n.clear();
-    updateList();
+    updateDeactivatedList();
     updateClearButton();
     clearDualPlots();
     plotSelected();
@@ -763,16 +830,16 @@ export default function(component) {
       const isAllZero = series && ((section === 'gamma' && series.all_zero_gamma) || (section === 'n' && series.all_zero_n));
       btn.classList.toggle('is-all-zero', Boolean(isAllZero));
       if (hideZero && isAllZero) {
-        if (selected.has(seriesId)) {
-          selected.delete(seriesId);
-          setButtonsSelected(seriesId, false);
+        if (plotSelectionMap.has(seriesId)) {
+          plotSelectionMap.delete(seriesId);
         }
         btn.classList.add('is-hidden');
       } else {
         btn.classList.remove('is-hidden');
       }
     });
-    updateList();
+    updateDeactivatedList();
+    syncDualButtonState();
     updateClearButton();
   }
 
@@ -780,7 +847,7 @@ export default function(component) {
     const gammaGrid = root.querySelector('#dual-plot-gamma');
     const nGrid = root.querySelector('#dual-plot-n');
     if (!gammaGrid || !nGrid) return;
-    const seriesIds = Array.from(selected.keys());
+    const seriesIds = Array.from(plotSelectionMap.keys());
     gammaGrid.innerHTML = '';
     nGrid.innerHTML = '';
     selectedPlotCards.gamma.clear();
@@ -996,15 +1063,53 @@ export default function(component) {
       const seriesId = button.getAttribute('data-series-id');
       const label = button.getAttribute('data-label');
       if (!seriesId) return;
-      if (selected.has(seriesId)) {
-        selected.delete(seriesId);
-        setButtonsSelected(seriesId, false);
+      if (actionTab === 'recompute') {
+        if (!deactivatedForRecompute.has(seriesId)) {
+          deactivatedForRecompute.set(seriesId, label || '');
+        }
+        syncDualButtonState();
+        updateDeactivatedList();
       } else {
-        selected.set(seriesId, label || '');
-        setButtonsSelected(seriesId, true);
+        if (plotSelectionMap.has(seriesId)) {
+          plotSelectionMap.delete(seriesId);
+        } else {
+          plotSelectionMap.set(seriesId, label || '');
+        }
+        syncDualButtonState();
+        updateClearButton();
       }
-      updateList();
-      updateClearButton();
+      return;
+    }
+
+    if (button.classList.contains('dual-reactivate-button')) {
+      event.preventDefault();
+      const seriesId = button.getAttribute('data-series-id');
+      if (!seriesId) return;
+      deactivatedForRecompute.delete(seriesId);
+      syncDualButtonState();
+      updateDeactivatedList();
+      return;
+    }
+    if (button.id === 'dual-activate-all') {
+      event.preventDefault();
+      deactivatedForRecompute.clear();
+      syncDualButtonState();
+      updateDeactivatedList();
+      return;
+    }
+    if (button.id === 'dual-deactivate-all') {
+      event.preventDefault();
+      const buttons = visibleButtons();
+      buttons.forEach((btn) => {
+        const seriesId = btn.getAttribute('data-series-id');
+        const label = btn.getAttribute('data-label');
+        if (!seriesId) return;
+        if (!deactivatedForRecompute.has(seriesId)) {
+          deactivatedForRecompute.set(seriesId, label || '');
+        }
+      });
+      syncDualButtonState();
+      updateDeactivatedList();
       return;
     }
 
@@ -1041,22 +1146,17 @@ export default function(component) {
       const buttons = visibleButtons();
       if (!buttons.length) return;
       const visibleSeries = new Set(buttons.map((btn) => btn.getAttribute('data-series-id')));
-      const allSelected = Array.from(visibleSeries).every((id) => selected.has(id));
+      const allSelected = Array.from(visibleSeries).every((id) => plotSelectionMap.has(id));
       if (allSelected) {
-        visibleSeries.forEach((id) => selected.delete(id));
-        root.querySelectorAll('.dual-button').forEach((btn) => {
-          const id = btn.getAttribute('data-series-id');
-          if (visibleSeries.has(id)) btn.classList.remove('is-clicked');
-        });
+        visibleSeries.forEach((id) => plotSelectionMap.delete(id));
       } else {
         buttons.forEach((btn) => {
           const seriesId = btn.getAttribute('data-series-id');
           const label = btn.getAttribute('data-label');
-          if (seriesId && !selected.has(seriesId)) selected.set(seriesId, label || '');
+          if (seriesId && !plotSelectionMap.has(seriesId)) plotSelectionMap.set(seriesId, label || '');
         });
-        visibleSeries.forEach((id) => setButtonsSelected(id, true));
       }
-      updateList();
+      syncDualButtonState();
       updateClearButton();
       clearDualPlots();
       return;
@@ -1070,11 +1170,14 @@ export default function(component) {
 
     if (button.id === 'dual-recompute') {
       event.preventDefault();
-      if (!selected.size) return;
+      if (!deactivatedForRecompute.size) return;
+      const allSeriesIds = Object.keys(seriesData);
+      const activeSeriesIds = allSeriesIds.filter((seriesId) => !deactivatedForRecompute.has(seriesId));
       setTriggerValue('recompute', {
         request_id: Date.now(),
-        selected_series_ids: Array.from(selected.keys()),
-        selected_labels: Array.from(selected.values()),
+        selected_series_ids: activeSeriesIds,
+        deactivated_series_ids: Array.from(deactivatedForRecompute.keys()),
+        deactivated_labels: Array.from(deactivatedForRecompute.values()),
         pattern_gamma: tauPatternGammaInput ? tauPatternGammaInput.value : '',
         pattern_n: tauPatternNInput ? tauPatternNInput.value : '',
       });
@@ -1119,6 +1222,12 @@ export default function(component) {
       });
     });
   }
+  if (tabPlotBtn) {
+    tabPlotBtn.addEventListener('click', () => setActionTab('plot'));
+  }
+  if (tabRecomputeBtn) {
+    tabRecomputeBtn.addEventListener('click', () => setActionTab('recompute'));
+  }
 
   if (tauPatternGammaHint) tauPatternGammaHint.textContent = buildPatternHintText('gamma');
   if (tauPatternNHint) tauPatternNHint.textContent = buildPatternHintText('n');
@@ -1130,16 +1239,16 @@ export default function(component) {
   selectedSeries.forEach((seriesId) => {
     const series = seriesData[seriesId];
     if (!series) return;
-    selected.set(seriesId, series.label);
-    setButtonsSelected(seriesId, true);
+    plotSelectionMap.set(seriesId, series.label);
   });
 
   applyZeroFilter();
+  setActionTab('plot');
   updateClearButton();
   updateRemoveButtons();
-  updateList();
+  updateDeactivatedList();
   ensureMath(() => ensurePlotly(renderTauPlots));
-  if (selected.size) {
+  if (plotSelectionMap.size) {
     ensurePlotly(plotSelected);
   }
 }

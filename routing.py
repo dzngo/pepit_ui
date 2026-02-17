@@ -656,36 +656,37 @@ def render_results_phase(algo_key: str, spec):
                 st.rerun()
         elif event_id and st.session_state.get(last_event_key) != event_id:
             if event_type == "recompute":
-                selected_series_ids = tuple(sorted(set(event.get("selected_series_ids", []))))
-                selected_labels = list(event.get("selected_labels", []))
+                active_series_ids = tuple(sorted(set(event.get("selected_series_ids", []))))
+                deactivated_series_ids = list(dict.fromkeys(event.get("deactivated_series_ids", [])))
+                deactivated_labels = list(event.get("deactivated_labels", []))
                 st.session_state[pattern_gamma_key] = str(event.get("pattern_gamma", ""))
                 st.session_state[pattern_n_key] = str(event.get("pattern_n", ""))
-                st.session_state[f"dual_selected_{algo_key}"] = list(selected_series_ids)
-                if selected_series_ids:
-                    with st.spinner("Recomputing tau grid with selected dual values..."):
-                        recompute_result = compute(
-                            algo_key,
-                            settings["gamma_spec"],
-                            settings["n_spec"],
-                            settings["function_config"],
-                            show_progress=True,
-                            rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
-                            selected_dual_series_ids=selected_series_ids,
-                        )
-                    if recompute_result is None:
-                        st.error("Unable to recompute tau grid for selected dual values.")
-                    else:
-                        next_index = int(st.session_state.setdefault(_run_counter_key(algo_key), 0)) + 1
-                        st.session_state[_run_counter_key(algo_key)] = next_index
-                        runs.append(
-                            {
-                                "id": f"run-{next_index}",
-                                "name": f"Run {next_index}",
-                                "selected_series_ids": list(selected_series_ids),
-                                "selected_labels": selected_labels,
-                                "visible": True,
-                            }
-                        )
+                with st.spinner("Recomputing tau grid with selected dual values..."):
+                    recompute_result = compute(
+                        algo_key,
+                        settings["gamma_spec"],
+                        settings["n_spec"],
+                        settings["function_config"],
+                        show_progress=True,
+                        rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
+                        selected_dual_series_ids=active_series_ids,
+                    )
+                if recompute_result is None:
+                    st.error("Unable to recompute tau grid for selected dual values.")
+                else:
+                    next_index = int(st.session_state.setdefault(_run_counter_key(algo_key), 0)) + 1
+                    st.session_state[_run_counter_key(algo_key)] = next_index
+                    runs.append(
+                        {
+                            "id": f"run-{next_index}",
+                            "name": f"Run {next_index}",
+                            "selected_series_ids": list(active_series_ids),
+                            "deactivated_series_ids": deactivated_series_ids,
+                            "deactivated_labels": deactivated_labels,
+                            "selected_labels": deactivated_labels,
+                            "visible": True,
+                        }
+                    )
                 st.session_state[last_event_key] = event_id
                 st.rerun()
 
@@ -807,7 +808,9 @@ def render_dual_values_panel(
                 "id": run["id"],
                 "name": run["name"],
                 "visible": bool(run.get("visible", True)),
-                "selected_labels": [str(label) for label in run.get("selected_labels", [])],
+                "selected_labels": [
+                    str(label) for label in run.get("deactivated_labels", run.get("selected_labels", []))
+                ],
                 "tau_grid": [
                     [float(value) if value is not None and np.isfinite(value) else None for value in row]
                     for row in run_result[2]

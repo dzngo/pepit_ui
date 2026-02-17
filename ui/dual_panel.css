@@ -54,6 +54,44 @@
 .dual-plot-actions-inline {
   margin: 0 0 6px 0;
 }
+.dual-recompute-actions {
+  margin-top: 12px;
+}
+.dual-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  margin-top: 2px;
+  margin-bottom: 0;
+  border-bottom: 1px solid rgba(49, 51, 63, 0.2);
+}
+.dual-tab {
+  border: 1px solid rgba(49, 51, 63, 0.2);
+  border-bottom: none;
+  background: #f6f7f9;
+  color: #31333f;
+  padding: 8px 14px;
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.dual-tab:hover {
+  background: #eceff3;
+}
+.dual-tab.is-active {
+  background: rgba(255, 255, 255, 0.75);
+  color: #111;
+  position: relative;
+  z-index: 1;
+}
+.dual-tabpanel {
+  border: none;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.75);
+  padding: 12px 0 8px 0;
+}
 .dual-plot-button {
   border: 1px solid #ff4d00;
   background: #ff4d00;
@@ -113,6 +151,9 @@
   border-color: #111 !important;
 }
 .dual-button.is-hidden {
+  display: none;
+}
+.dual-button.is-recompute-hidden {
   display: none;
 }
 .dual-plot-section {
@@ -271,4 +312,7 @@
   border-radius: 999px;
   font-size: 12px;
   white-space: nowrap;
+}
+.dual-reactivate-button {
+  cursor: pointer;
 }
