@@ -808,127 +808,160 @@ export default function(component) {
 
     grouped.forEach((ids, constraint) => {
       const constraintLabel = escapeHtml(constraint);
-      const gammaSection = document.createElement('div');
-      gammaSection.className = 'dual-plot-constraint';
-      gammaSection.innerHTML = `<div class="dual-plot-constraint-title">${constraintLabel}</div><div class="dual-plot-cards" data-constraint="${constraintLabel}"></div>`;
-      gammaGrid.appendChild(gammaSection);
+      let gammaConstraintGrid = null;
+      let nConstraintGrid = null;
 
-      const nSection = document.createElement('div');
-      nSection.className = 'dual-plot-constraint';
-      nSection.innerHTML = `<div class="dual-plot-constraint-title">${constraintLabel}</div><div class="dual-plot-cards" data-constraint="${constraintLabel}"></div>`;
-      nGrid.appendChild(nSection);
+      function ensureGammaSection() {
+        if (gammaConstraintGrid) return gammaConstraintGrid;
+        const gammaSection = document.createElement('div');
+        gammaSection.className = 'dual-plot-constraint';
+        gammaSection.innerHTML = `<div class="dual-plot-constraint-title">${constraintLabel}</div><div class="dual-plot-cards" data-constraint="${constraintLabel}"></div>`;
+        gammaGrid.appendChild(gammaSection);
+        gammaConstraintGrid = gammaSection.querySelector('.dual-plot-cards');
+        return gammaConstraintGrid;
+      }
 
-      const gammaConstraintGrid = gammaSection.querySelector('.dual-plot-cards');
-      const nConstraintGrid = nSection.querySelector('.dual-plot-cards');
+      function ensureNSection() {
+        if (nConstraintGrid) return nConstraintGrid;
+        const nSection = document.createElement('div');
+        nSection.className = 'dual-plot-constraint';
+        nSection.innerHTML = `<div class="dual-plot-constraint-title">${constraintLabel}</div><div class="dual-plot-cards" data-constraint="${constraintLabel}"></div>`;
+        nGrid.appendChild(nSection);
+        nConstraintGrid = nSection.querySelector('.dual-plot-cards');
+        return nConstraintGrid;
+      }
 
       ids.forEach((seriesId) => {
         const series = seriesData[seriesId];
         if (!series) return;
+        const gammaCount = series.gamma_dual.filter((value) => value !== null && Number.isFinite(value)).length;
+        const nCount = series.n_dual.filter((value) => value !== null && Number.isFinite(value)).length;
+        const hasGammaData = gammaCount > 0;
+        const hasNData = nCount > 0;
+        if (!hasGammaData && !hasNData) return;
+
         const safeId = sanitizeId(seriesId);
         const safeKey = `${safeId}-${Math.random().toString(36).slice(2, 8)}`;
         const gammaPlotId = `gamma-${safeKey}`;
         const nPlotId = `n-${safeKey}`;
 
-        const gammaCard = document.createElement('div');
-        gammaCard.className = 'dual-plot-card';
-        gammaCard.setAttribute('data-series-id', seriesId);
-        gammaCard.innerHTML = `<div class="dual-plot-card-title">${formatDualLabel(series.label)}</div><div id="${gammaPlotId}" class="dual-plot-chart"></div><input class="dual-overlay-input" type="text" placeholder="${randomOverlayPlaceholder()}" data-series-id="${escapeHtml(seriesId)}" data-axis="gamma" data-plot-id="${gammaPlotId}">`;
-        gammaConstraintGrid.appendChild(gammaCard);
-        gammaCard.addEventListener('click', () => togglePlotCardSelection(gammaCard, selectedPlotCards.gamma));
+        if (hasGammaData) {
+          const gammaCard = document.createElement('div');
+          gammaCard.className = 'dual-plot-card';
+          gammaCard.setAttribute('data-series-id', seriesId);
+          gammaCard.innerHTML = `<div class="dual-plot-card-title">${formatDualLabel(series.label)}</div><div id="${gammaPlotId}" class="dual-plot-chart"></div><input class="dual-overlay-input" type="text" placeholder="${randomOverlayPlaceholder()}" data-series-id="${escapeHtml(seriesId)}" data-axis="gamma" data-plot-id="${gammaPlotId}">`;
+          ensureGammaSection().appendChild(gammaCard);
+          gammaCard.addEventListener('click', () => togglePlotCardSelection(gammaCard, selectedPlotCards.gamma));
 
-        const nCard = document.createElement('div');
-        nCard.className = 'dual-plot-card';
-        nCard.setAttribute('data-series-id', seriesId);
-        nCard.innerHTML = `<div class="dual-plot-card-title">${formatDualLabel(series.label)}</div><div id="${nPlotId}" class="dual-plot-chart"></div><input class="dual-overlay-input" type="text" placeholder="${randomOverlayPlaceholder()}" data-series-id="${escapeHtml(seriesId)}" data-axis="n" data-plot-id="${nPlotId}">`;
-        nConstraintGrid.appendChild(nCard);
-        nCard.addEventListener('click', () => togglePlotCardSelection(nCard, selectedPlotCards.n));
-
-        const gammaTraces = [];
-        const gammaCount = series.gamma_dual.filter((value) => value !== null && Number.isFinite(value)).length;
-        gammaTraces.push({
-          x: series.gamma_values,
-          y: series.gamma_dual,
-          mode: gammaCount <= 1 ? 'markers' : 'lines',
-          name: 'Baseline',
-          line: { color: '#9aa0a6', width: 2 },
-          hovertemplate: 'gamma=%{x:.3f}<br>Baseline=%{y:.3e}<extra></extra>',
-          showlegend: false,
-        });
-        const gammaRunMap = new Map();
-        dualRuns.forEach((run) => {
-          const runSeries = (run.series_data || {})[seriesId];
-          if (!runSeries) return;
-          const traceIndex = gammaTraces.length;
-          const runGammaCount = runSeries.gamma_dual.filter((value) => value !== null && Number.isFinite(value)).length;
+          const gammaTraces = [];
           gammaTraces.push({
-            x: runSeries.gamma_values,
-            y: runSeries.gamma_dual,
-            mode: runGammaCount <= 1 ? 'markers' : 'lines',
-            name: run.name || run.id || 'Run',
-            line: { color: run.color || '#f97316', width: 2 },
-            hovertemplate: `gamma=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
+            x: series.gamma_values,
+            y: series.gamma_dual,
+            mode: gammaCount <= 1 ? 'markers' : 'lines',
+            name: 'Baseline',
+            line: { color: '#9aa0a6', width: 2 },
+            hovertemplate: 'gamma=%{x:.3f}<br>Baseline=%{y:.3e}<extra></extra>',
             showlegend: false,
-            visible: runVisibility.get(run.id) !== false ? true : 'legendonly',
           });
-          gammaRunMap.set(run.id, traceIndex);
-        });
-        dualTraceRegistry.set(gammaPlotId, gammaRunMap);
-        Plotly.newPlot(
-          gammaPlotId,
-          gammaTraces,
-          { autosize: true, xaxis: { title: '', tickfont: { size: 9 } }, yaxis: { title: '', tickfont: { size: 9 } }, margin: { t: 10, l: 30, r: 10, b: 15 } },
-          { displayModeBar: false, responsive: true },
-        );
+          const gammaRunMap = new Map();
+          dualRuns.forEach((run) => {
+            const runSeries = (run.series_data || {})[seriesId];
+            if (!runSeries) return;
+            const runGammaCount = runSeries.gamma_dual.filter((value) => value !== null && Number.isFinite(value)).length;
+            if (!runGammaCount) return;
+            const traceIndex = gammaTraces.length;
+            gammaTraces.push({
+              x: runSeries.gamma_values,
+              y: runSeries.gamma_dual,
+              mode: runGammaCount <= 1 ? 'markers' : 'lines',
+              name: run.name || run.id || 'Run',
+              line: { color: run.color || '#f97316', width: 2 },
+              hovertemplate: `gamma=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
+              showlegend: false,
+              visible: runVisibility.get(run.id) !== false ? true : 'legendonly',
+            });
+            gammaRunMap.set(run.id, traceIndex);
+          });
+          dualTraceRegistry.set(gammaPlotId, gammaRunMap);
+          Plotly.newPlot(
+            gammaPlotId,
+            gammaTraces,
+            { autosize: true, xaxis: { title: '', tickfont: { size: 9 } }, yaxis: { title: '', tickfont: { size: 9 } }, margin: { t: 10, l: 30, r: 10, b: 15 } },
+            { displayModeBar: false, responsive: true },
+          );
 
-        const nTraces = [];
-        const nCount = series.n_dual.filter((value) => value !== null && Number.isFinite(value)).length;
-        nTraces.push({
-          x: series.n_values,
-          y: series.n_dual,
-          mode: nCount <= 1 ? 'markers' : 'lines',
-          name: 'Baseline',
-          line: { color: '#9aa0a6', width: 2 },
-          hovertemplate: 'n=%{x:.3f}<br>Baseline=%{y:.3e}<extra></extra>',
-          showlegend: false,
-        });
-        const nRunMap = new Map();
-        dualRuns.forEach((run) => {
-          const runSeries = (run.series_data || {})[seriesId];
-          if (!runSeries) return;
-          const traceIndex = nTraces.length;
-          const runNCount = runSeries.n_dual.filter((value) => value !== null && Number.isFinite(value)).length;
+          const gammaOverlayInput = gammaCard.querySelector('.dual-overlay-input');
+          if (gammaOverlayInput) {
+            gammaOverlayInput.addEventListener('focus', () => gammaOverlayInput.setAttribute('placeholder', ''));
+            gammaOverlayInput.addEventListener('click', (event) => event.stopPropagation());
+            gammaOverlayInput.addEventListener('input', (event) => {
+              const key = gammaOverlayInput.getAttribute('data-plot-id');
+              if (overlayDebounce.has(key)) clearTimeout(overlayDebounce.get(key));
+              overlayDebounce.set(key, setTimeout(() => ensureMath(() => handleOverlayInput(event)), 250));
+            });
+          }
+        }
+
+        if (hasNData) {
+          const nCard = document.createElement('div');
+          nCard.className = 'dual-plot-card';
+          nCard.setAttribute('data-series-id', seriesId);
+          nCard.innerHTML = `<div class="dual-plot-card-title">${formatDualLabel(series.label)}</div><div id="${nPlotId}" class="dual-plot-chart"></div><input class="dual-overlay-input" type="text" placeholder="${randomOverlayPlaceholder()}" data-series-id="${escapeHtml(seriesId)}" data-axis="n" data-plot-id="${nPlotId}">`;
+          ensureNSection().appendChild(nCard);
+          nCard.addEventListener('click', () => togglePlotCardSelection(nCard, selectedPlotCards.n));
+
+          const nTraces = [];
           nTraces.push({
-            x: runSeries.n_values,
-            y: runSeries.n_dual,
-            mode: runNCount <= 1 ? 'markers' : 'lines',
-            name: run.name || run.id || 'Run',
-            line: { color: run.color || '#f97316', width: 2 },
-            hovertemplate: `n=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
+            x: series.n_values,
+            y: series.n_dual,
+            mode: nCount <= 1 ? 'markers' : 'lines',
+            name: 'Baseline',
+            line: { color: '#9aa0a6', width: 2 },
+            hovertemplate: 'n=%{x:.3f}<br>Baseline=%{y:.3e}<extra></extra>',
             showlegend: false,
-            visible: runVisibility.get(run.id) !== false ? true : 'legendonly',
           });
-          nRunMap.set(run.id, traceIndex);
-        });
-        dualTraceRegistry.set(nPlotId, nRunMap);
-        Plotly.newPlot(
-          nPlotId,
-          nTraces,
-          { autosize: true, xaxis: { title: '', tickfont: { size: 9 } }, yaxis: { title: '', tickfont: { size: 9 } }, margin: { t: 10, l: 30, r: 10, b: 15 } },
-          { displayModeBar: false, responsive: true },
-        );
+          const nRunMap = new Map();
+          dualRuns.forEach((run) => {
+            const runSeries = (run.series_data || {})[seriesId];
+            if (!runSeries) return;
+            const runNCount = runSeries.n_dual.filter((value) => value !== null && Number.isFinite(value)).length;
+            if (!runNCount) return;
+            const traceIndex = nTraces.length;
+            nTraces.push({
+              x: runSeries.n_values,
+              y: runSeries.n_dual,
+              mode: runNCount <= 1 ? 'markers' : 'lines',
+              name: run.name || run.id || 'Run',
+              line: { color: run.color || '#f97316', width: 2 },
+              hovertemplate: `n=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
+              showlegend: false,
+              visible: runVisibility.get(run.id) !== false ? true : 'legendonly',
+            });
+            nRunMap.set(run.id, traceIndex);
+          });
+          dualTraceRegistry.set(nPlotId, nRunMap);
+          Plotly.newPlot(
+            nPlotId,
+            nTraces,
+            { autosize: true, xaxis: { title: '', tickfont: { size: 9 } }, yaxis: { title: '', tickfont: { size: 9 } }, margin: { t: 10, l: 30, r: 10, b: 15 } },
+            { displayModeBar: false, responsive: true },
+          );
 
-        [gammaCard.querySelector('.dual-overlay-input'), nCard.querySelector('.dual-overlay-input')].forEach((input) => {
-          if (!input) return;
-          input.addEventListener('focus', () => input.setAttribute('placeholder', ''));
-          input.addEventListener('click', (event) => event.stopPropagation());
-          input.addEventListener('input', (event) => {
-            const key = input.getAttribute('data-plot-id');
-            if (overlayDebounce.has(key)) clearTimeout(overlayDebounce.get(key));
-            overlayDebounce.set(key, setTimeout(() => ensureMath(() => handleOverlayInput(event)), 250));
-          });
-        });
+          const nOverlayInput = nCard.querySelector('.dual-overlay-input');
+          if (nOverlayInput) {
+            nOverlayInput.addEventListener('focus', () => nOverlayInput.setAttribute('placeholder', ''));
+            nOverlayInput.addEventListener('click', (event) => event.stopPropagation());
+            nOverlayInput.addEventListener('input', (event) => {
+              const key = nOverlayInput.getAttribute('data-plot-id');
+              if (overlayDebounce.has(key)) clearTimeout(overlayDebounce.get(key));
+              overlayDebounce.set(key, setTimeout(() => ensureMath(() => handleOverlayInput(event)), 250));
+            });
+          }
+        }
       });
     });
+    if (!gammaGrid.childElementCount) gammaGrid.textContent = 'No gamma-series data for selected dual values.';
+    if (!nGrid.childElementCount) nGrid.textContent = 'No n-series data for selected dual values.';
   }
 
   root.addEventListener('click', (event) => {
