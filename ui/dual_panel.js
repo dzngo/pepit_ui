@@ -339,8 +339,8 @@ export default function(component) {
   let nIdx = tauNSlider ? Number(tauNSlider.value) : 0;
   let lastCursorEventKey = `${gammaIdx}:${nIdx}`;
 
-  function visibleButtons() {
-    return Array.from(root.querySelectorAll('.dual-button:not(.is-hidden):not(.is-recompute-hidden)'));
+  function visibleButtonsForPlot() {
+    return Array.from(root.querySelectorAll('.dual-button:not(.is-hidden)'));
   }
 
   function updateDeactivatedList() {
@@ -394,7 +394,7 @@ export default function(component) {
 
   function updateClearButton() {
     if (!clearBtn) return;
-    const buttons = visibleButtons();
+    const buttons = visibleButtonsForPlot();
     if (!buttons.length) {
       clearBtn.textContent = 'Select all';
       return;
@@ -1092,6 +1092,7 @@ export default function(component) {
     }
     if (button.id === 'dual-activate-all') {
       event.preventDefault();
+      if (actionTab !== 'recompute') return;
       deactivatedForRecompute.clear();
       syncDualButtonState();
       updateDeactivatedList();
@@ -1099,7 +1100,8 @@ export default function(component) {
     }
     if (button.id === 'dual-deactivate-all') {
       event.preventDefault();
-      const buttons = visibleButtons();
+      setActionTab('recompute');
+      const buttons = Array.from(root.querySelectorAll('.dual-button:not(.is-hidden)'));
       buttons.forEach((btn) => {
         const seriesId = btn.getAttribute('data-series-id');
         const label = btn.getAttribute('data-label');
@@ -1143,7 +1145,8 @@ export default function(component) {
 
     if (button.id === 'dual-clear') {
       event.preventDefault();
-      const buttons = visibleButtons();
+      if (actionTab !== 'plot') return;
+      const buttons = visibleButtonsForPlot();
       if (!buttons.length) return;
       const visibleSeries = new Set(buttons.map((btn) => btn.getAttribute('data-series-id')));
       const allSelected = Array.from(visibleSeries).every((id) => plotSelectionMap.has(id));
