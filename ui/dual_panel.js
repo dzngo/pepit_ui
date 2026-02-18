@@ -208,11 +208,18 @@ export default function(component) {
         <div class="dual-panel">
           <div class="dual-plot-section">
             <div style="display:flex;align-items:center;gap:8px;">
-              <strong>gamma</strong>
-              <input type="range" id="tau-gamma-slider" min="0" max="${Math.max(gammaValues.length - 1, 0)}" step="1" value="${Math.min(Math.max(Number(tauPayload.default_gamma_idx || 0), 0), Math.max(gammaValues.length - 1, 0))}" style="flex:1;" />
-              <span id="tau-gamma-value"></span>
+              <strong>Local n</strong>
+              <input type="range" id="tau-local-n-for-gamma-slider" min="0" max="${Math.max(nValues.length - 1, 0)}" step="1" value="${Math.min(Math.max(Number((tauPayload.default_local_n_idx_for_gamma ?? tauPayload.default_n_idx ?? 0)), 0), Math.max(nValues.length - 1, 0))}" style="flex:1;" />
+              <span id="tau-local-n-for-gamma-value"></span>
             </div>
             <div id="tau-plot-gamma" class="dual-plot-chart" style="min-height:320px;"></div>
+            <div class="tau-global-control">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <strong>Global gamma</strong>
+                <input type="range" id="tau-global-gamma-slider" min="0" max="${Math.max(gammaValues.length - 1, 0)}" step="1" value="${Math.min(Math.max(Number(tauPayload.default_gamma_idx || 0), 0), Math.max(gammaValues.length - 1, 0))}" style="flex:1;" />
+                <span id="tau-global-gamma-value"></span>
+              </div>
+            </div>
             <input class="dual-overlay-input" id="tau-pattern-gamma" type="text" value="${escapeHtml(String(tauPayload.pattern_gamma || ''))}" placeholder="${randomOverlayPlaceholder()}" style="display:block;">
             <div id="tau-pattern-gamma-hint" style="font-size:12px;color:#666;"></div>
             <div id="tau-pattern-gamma-error" style="font-size:12px;color:#cb0000;min-height:16px;"></div>
@@ -221,11 +228,18 @@ export default function(component) {
         <div class="dual-panel">
           <div class="dual-plot-section">
             <div style="display:flex;align-items:center;gap:8px;">
-              <strong>n</strong>
-              <input type="range" id="tau-n-slider" min="0" max="${Math.max(nValues.length - 1, 0)}" step="1" value="${Math.min(Math.max(Number(tauPayload.default_n_idx || 0), 0), Math.max(nValues.length - 1, 0))}" style="flex:1;" />
-              <span id="tau-n-value"></span>
+              <strong>Local gamma</strong>
+              <input type="range" id="tau-local-gamma-for-n-slider" min="0" max="${Math.max(gammaValues.length - 1, 0)}" step="1" value="${Math.min(Math.max(Number((tauPayload.default_local_gamma_idx_for_n ?? tauPayload.default_gamma_idx ?? 0)), 0), Math.max(gammaValues.length - 1, 0))}" style="flex:1;" />
+              <span id="tau-local-gamma-for-n-value"></span>
             </div>
             <div id="tau-plot-n" class="dual-plot-chart" style="min-height:320px;"></div>
+            <div class="tau-global-control">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <strong>Global n</strong>
+                <input type="range" id="tau-global-n-slider" min="0" max="${Math.max(nValues.length - 1, 0)}" step="1" value="${Math.min(Math.max(Number(tauPayload.default_n_idx || 0), 0), Math.max(nValues.length - 1, 0))}" style="flex:1;" />
+                <span id="tau-global-n-value"></span>
+              </div>
+            </div>
             <input class="dual-overlay-input" id="tau-pattern-n" type="text" value="${escapeHtml(String(tauPayload.pattern_n || ''))}" placeholder="${randomOverlayPlaceholder()}" style="display:block;">
             <div id="tau-pattern-n-hint" style="font-size:12px;color:#666;"></div>
             <div id="tau-pattern-n-error" style="font-size:12px;color:#cb0000;min-height:16px;"></div>
@@ -323,10 +337,14 @@ export default function(component) {
   const recomputeBtn = root.querySelector('#dual-recompute');
   const activateAllBtn = root.querySelector('#dual-activate-all');
   const deactivateAllBtn = root.querySelector('#dual-deactivate-all');
-  const tauGammaSlider = root.querySelector('#tau-gamma-slider');
-  const tauNSlider = root.querySelector('#tau-n-slider');
-  const tauGammaValue = root.querySelector('#tau-gamma-value');
-  const tauNValue = root.querySelector('#tau-n-value');
+  const tauLocalNForGammaSlider = root.querySelector('#tau-local-n-for-gamma-slider');
+  const tauLocalGammaForNSlider = root.querySelector('#tau-local-gamma-for-n-slider');
+  const tauGlobalGammaSlider = root.querySelector('#tau-global-gamma-slider');
+  const tauGlobalNSlider = root.querySelector('#tau-global-n-slider');
+  const tauLocalNForGammaValue = root.querySelector('#tau-local-n-for-gamma-value');
+  const tauLocalGammaForNValue = root.querySelector('#tau-local-gamma-for-n-value');
+  const tauGlobalGammaValue = root.querySelector('#tau-global-gamma-value');
+  const tauGlobalNValue = root.querySelector('#tau-global-n-value');
   const tauPatternGammaInput = root.querySelector('#tau-pattern-gamma');
   const tauPatternNInput = root.querySelector('#tau-pattern-n');
   const tauPatternGammaHint = root.querySelector('#tau-pattern-gamma-hint');
@@ -335,9 +353,11 @@ export default function(component) {
   const tauPatternNError = root.querySelector('#tau-pattern-n-error');
   const metricSelect = root.querySelector('#dual-ranking-metric');
 
-  let gammaIdx = tauGammaSlider ? Number(tauGammaSlider.value) : 0;
-  let nIdx = tauNSlider ? Number(tauNSlider.value) : 0;
-  let lastCursorEventKey = `${gammaIdx}:${nIdx}`;
+  let globalGammaIdx = tauGlobalGammaSlider ? Number(tauGlobalGammaSlider.value) : 0;
+  let globalNIdx = tauGlobalNSlider ? Number(tauGlobalNSlider.value) : 0;
+  let localNIdxForGammaPlot = tauLocalNForGammaSlider ? Number(tauLocalNForGammaSlider.value) : globalNIdx;
+  let localGammaIdxForNPlot = tauLocalGammaForNSlider ? Number(tauLocalGammaForNSlider.value) : globalGammaIdx;
+  let lastCursorEventKey = `${globalGammaIdx}:${globalNIdx}`;
 
   function visibleButtonsForPlot() {
     return Array.from(root.querySelectorAll('.dual-button:not(.is-hidden)'));
@@ -506,10 +526,10 @@ export default function(component) {
       });
       if (axis === 'gamma') {
         scope.gamma = Number(x);
-        scope.n = Number(nValues[nIdx]);
+        scope.n = Number(nValues[globalNIdx]);
       } else {
         scope.n = Number(x);
-        scope.gamma = Number(gammaValues[gammaIdx]);
+        scope.gamma = Number(gammaValues[globalGammaIdx]);
       }
       return scope;
     });
@@ -569,11 +589,17 @@ export default function(component) {
   }
 
   function updateTauLabels() {
-    if (tauGammaValue) {
-      tauGammaValue.textContent = gammaValues[gammaIdx] !== undefined ? String(gammaValues[gammaIdx]) : '';
+    if (tauLocalNForGammaValue) {
+      tauLocalNForGammaValue.textContent = nValues[localNIdxForGammaPlot] !== undefined ? String(nValues[localNIdxForGammaPlot]) : '';
     }
-    if (tauNValue) {
-      tauNValue.textContent = nValues[nIdx] !== undefined ? String(nValues[nIdx]) : '';
+    if (tauLocalGammaForNValue) {
+      tauLocalGammaForNValue.textContent = gammaValues[localGammaIdxForNPlot] !== undefined ? String(gammaValues[localGammaIdxForNPlot]) : '';
+    }
+    if (tauGlobalGammaValue) {
+      tauGlobalGammaValue.textContent = gammaValues[globalGammaIdx] !== undefined ? String(gammaValues[globalGammaIdx]) : '';
+    }
+    if (tauGlobalNValue) {
+      tauGlobalNValue.textContent = nValues[globalNIdx] !== undefined ? String(nValues[globalNIdx]) : '';
     }
   }
 
@@ -585,8 +611,8 @@ export default function(component) {
     const parts = [`Available parameters: ${paramsHint}.`];
     if (patternInvalidParams.length) parts.push(`Ignored (non-scalar): ${patternInvalidParams.join(', ')}.`);
     if (patternConflictParams.length) parts.push(`Conflicts: ${patternConflictParams.join(', ')}.`);
-    if (primaryAxisName === 'gamma') parts.push('Variables: x, gamma, n (current slider value).');
-    else parts.push('Variables: x, n, gamma (current slider value).');
+    if (primaryAxisName === 'gamma') parts.push('Variables: x, gamma, n (local n slider value).');
+    else parts.push('Variables: x, n, gamma (local gamma slider value).');
     return parts.join(' ');
   }
 
@@ -617,11 +643,11 @@ export default function(component) {
       if (axis === 'gamma') {
         scope.x = x;
         scope.gamma = x;
-        scope.n = Number(nValues[nIdx]);
+        scope.n = Number(nValues[localNIdxForGammaPlot]);
       } else {
         scope.x = x;
         scope.n = x;
-        scope.gamma = Number(gammaValues[gammaIdx]);
+        scope.gamma = Number(gammaValues[localGammaIdxForNPlot]);
       }
       try {
         const value = compiled.evaluate(scope);
@@ -658,21 +684,22 @@ export default function(component) {
     if (tauPatternGammaInput) tauPatternGammaInput.classList.toggle('is-error', Boolean(gammaOverlay.error));
     if (tauPatternNInput) tauPatternNInput.classList.toggle('is-error', Boolean(nOverlay.error));
 
-    const currentTau = Array.isArray(tauGrid[gammaIdx]) ? tauGrid[gammaIdx][nIdx] : null;
+    const currentTauGamma = Array.isArray(tauGrid[globalGammaIdx]) ? tauGrid[globalGammaIdx][localNIdxForGammaPlot] : null;
+    const currentTauN = Array.isArray(tauGrid[localGammaIdxForNPlot]) ? tauGrid[localGammaIdxForNPlot][globalNIdx] : null;
     const gammaTraces = [
       {
         x: gammaValues,
-        y: tauColumn(tauGrid, nIdx),
+        y: tauColumn(tauGrid, localNIdxForGammaPlot),
         mode: 'lines',
         line: { color: '#9aa0a6', width: 2 },
         hovertemplate: 'gamma=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>',
         showlegend: false,
       },
     ];
-    if (currentTau !== null && currentTau !== undefined) {
+    if (currentTauGamma !== null && currentTauGamma !== undefined) {
       gammaTraces.push({
-        x: [gammaValues[gammaIdx]],
-        y: [currentTau],
+        x: [gammaValues[globalGammaIdx]],
+        y: [currentTauGamma],
         mode: 'markers',
         marker: { size: 12 },
         hovertemplate: 'gamma=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>',
@@ -683,17 +710,17 @@ export default function(component) {
     const nTraces = [
       {
         x: nValues,
-        y: tauRow(tauGrid, gammaIdx),
+        y: tauRow(tauGrid, localGammaIdxForNPlot),
         mode: 'lines',
         line: { color: '#9aa0a6', width: 2 },
         hovertemplate: 'n=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>',
         showlegend: false,
       },
     ];
-    if (currentTau !== null && currentTau !== undefined) {
+    if (currentTauN !== null && currentTauN !== undefined) {
       nTraces.push({
-        x: [nValues[nIdx]],
-        y: [currentTau],
+        x: [nValues[globalNIdx]],
+        y: [currentTauN],
         mode: 'markers',
         marker: { size: 12 },
         hovertemplate: 'n=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>',
@@ -706,7 +733,7 @@ export default function(component) {
       const gammaTraceIdx = gammaTraces.length;
       gammaTraces.push({
         x: gammaValues,
-        y: tauColumn(grid, nIdx),
+        y: tauColumn(grid, localNIdxForGammaPlot),
         mode: 'lines',
         line: { color: run.color || '#f97316', width: 2 },
         hovertemplate: `gamma=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
@@ -718,7 +745,7 @@ export default function(component) {
       const nTraceIdx = nTraces.length;
       nTraces.push({
         x: nValues,
-        y: tauRow(grid, gammaIdx),
+        y: tauRow(grid, localGammaIdxForNPlot),
         mode: 'lines',
         line: { color: run.color || '#f97316', width: 2 },
         hovertemplate: `n=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
@@ -753,26 +780,28 @@ export default function(component) {
     Plotly.newPlot(
       'tau-plot-gamma',
       gammaTraces,
-      { autosize: true, title: { text: 'Tau vs gamma' }, xaxis: { title: 'gamma' }, yaxis: { title: 'tau' }, margin: { t: 40, l: 45, r: 10, b: 35 } },
+      { autosize: true, title: { text: `Tau vs gamma (n = ${nValues[localNIdxForGammaPlot] ?? ''})` }, xaxis: { title: 'gamma' }, yaxis: { title: 'tau' }, margin: { t: 40, l: 45, r: 10, b: 35 } },
       { displayModeBar: false, responsive: true },
     );
     Plotly.newPlot(
       'tau-plot-n',
       nTraces,
-      { autosize: true, title: { text: 'Tau vs n' }, xaxis: { title: 'n' }, yaxis: { title: 'tau' }, margin: { t: 40, l: 45, r: 10, b: 35 } },
+      { autosize: true, title: { text: `Tau vs n (gamma = ${gammaValues[localGammaIdxForNPlot] ?? ''})` }, xaxis: { title: 'n' }, yaxis: { title: 'tau' }, margin: { t: 40, l: 45, r: 10, b: 35 } },
       { displayModeBar: false, responsive: true },
     );
     updateTauLabels();
   }
 
   function emitCursorIfChanged() {
-    const currentKey = `${gammaIdx}:${nIdx}`;
+    const currentKey = `${globalGammaIdx}:${globalNIdx}`;
     if (currentKey === lastCursorEventKey) return;
     lastCursorEventKey = currentKey;
     setTriggerValue('cursor', {
       request_id: Date.now(),
-      gamma_idx: gammaIdx,
-      n_idx: nIdx,
+      gamma_idx: globalGammaIdx,
+      n_idx: globalNIdx,
+      local_n_idx_for_gamma: localNIdxForGammaPlot,
+      local_gamma_idx_for_n: localGammaIdxForNPlot,
       pattern_gamma: tauPatternGammaInput ? tauPatternGammaInput.value : '',
       pattern_n: tauPatternNInput ? tauPatternNInput.value : '',
     });
@@ -1134,12 +1163,10 @@ export default function(component) {
     if (button.id === 'dual-overlay') {
       event.preventDefault();
       const wrapperEl = root.querySelector('.dual-wrapper');
-      ensureMath(() => {
-        root.querySelectorAll('.dual-overlay-input').forEach((input) => input.setAttribute('placeholder', randomOverlayPlaceholder()));
-        if (!wrapperEl) return;
-        wrapperEl.classList.toggle('dual-show-overlay');
-        button.classList.toggle('is-active', wrapperEl.classList.contains('dual-show-overlay'));
-      });
+      root.querySelectorAll('.dual-overlay-input').forEach((input) => input.setAttribute('placeholder', randomOverlayPlaceholder()));
+      if (!wrapperEl) return;
+      wrapperEl.classList.toggle('dual-show-overlay');
+      button.classList.toggle('is-active', wrapperEl.classList.contains('dual-show-overlay'));
       return;
     }
 
@@ -1181,29 +1208,43 @@ export default function(component) {
         selected_series_ids: activeSeriesIds,
         deactivated_series_ids: Array.from(deactivatedForRecompute.keys()),
         deactivated_labels: Array.from(deactivatedForRecompute.values()),
+        local_n_idx_for_gamma: localNIdxForGammaPlot,
+        local_gamma_idx_for_n: localGammaIdxForNPlot,
         pattern_gamma: tauPatternGammaInput ? tauPatternGammaInput.value : '',
         pattern_n: tauPatternNInput ? tauPatternNInput.value : '',
       });
     }
   });
 
-  if (tauGammaSlider) {
-    tauGammaSlider.addEventListener('input', () => {
-      gammaIdx = Number(tauGammaSlider.value);
+  if (tauLocalNForGammaSlider) {
+    tauLocalNForGammaSlider.addEventListener('input', () => {
+      localNIdxForGammaPlot = Number(tauLocalNForGammaSlider.value);
       ensurePlotly(renderTauPlots);
     });
-    tauGammaSlider.addEventListener('change', () => {
-      gammaIdx = Number(tauGammaSlider.value);
+  }
+  if (tauLocalGammaForNSlider) {
+    tauLocalGammaForNSlider.addEventListener('input', () => {
+      localGammaIdxForNPlot = Number(tauLocalGammaForNSlider.value);
+      ensurePlotly(renderTauPlots);
+    });
+  }
+  if (tauGlobalGammaSlider) {
+    tauGlobalGammaSlider.addEventListener('input', () => {
+      globalGammaIdx = Number(tauGlobalGammaSlider.value);
+      ensurePlotly(renderTauPlots);
+    });
+    tauGlobalGammaSlider.addEventListener('change', () => {
+      globalGammaIdx = Number(tauGlobalGammaSlider.value);
       emitCursorIfChanged();
     });
   }
-  if (tauNSlider) {
-    tauNSlider.addEventListener('input', () => {
-      nIdx = Number(tauNSlider.value);
+  if (tauGlobalNSlider) {
+    tauGlobalNSlider.addEventListener('input', () => {
+      globalNIdx = Number(tauGlobalNSlider.value);
       ensurePlotly(renderTauPlots);
     });
-    tauNSlider.addEventListener('change', () => {
-      nIdx = Number(tauNSlider.value);
+    tauGlobalNSlider.addEventListener('change', () => {
+      globalNIdx = Number(tauGlobalNSlider.value);
       emitCursorIfChanged();
     });
   }

@@ -485,6 +485,8 @@ def render_loading_phase(algo_key: str, spec):
     st.session_state[f"n_slider_{algo_key}"] = float(n_spec.min_value)
     st.session_state[f"gamma_idx_{algo_key}"] = 0
     st.session_state[f"n_idx_{algo_key}"] = 0
+    st.session_state[f"tau_local_n_idx_for_gamma_{algo_key}"] = 0
+    st.session_state[f"tau_local_gamma_idx_for_n_{algo_key}"] = 0
     st.session_state[f"tau_pattern_gamma_{algo_key}"] = ""
     st.session_state[f"tau_pattern_n_{algo_key}"] = ""
     st.rerun()
@@ -537,12 +539,20 @@ def render_results_phase(algo_key: str, spec):
                 st.markdown("*params*: `{}`")
     gamma_idx_key = f"gamma_idx_{algo_key}"
     n_idx_key = f"n_idx_{algo_key}"
+    tau_local_n_idx_key = f"tau_local_n_idx_for_gamma_{algo_key}"
+    tau_local_gamma_idx_key = f"tau_local_gamma_idx_for_n_{algo_key}"
     gamma_idx = int(st.session_state.get(gamma_idx_key, 0))
     n_idx = int(st.session_state.get(n_idx_key, 0))
+    tau_local_n_idx_for_gamma = int(st.session_state.get(tau_local_n_idx_key, n_idx))
+    tau_local_gamma_idx_for_n = int(st.session_state.get(tau_local_gamma_idx_key, gamma_idx))
     gamma_idx = max(0, min(gamma_idx, len(gamma_values) - 1))
     n_idx = max(0, min(n_idx, len(n_values) - 1))
+    tau_local_n_idx_for_gamma = max(0, min(tau_local_n_idx_for_gamma, len(n_values) - 1))
+    tau_local_gamma_idx_for_n = max(0, min(tau_local_gamma_idx_for_n, len(gamma_values) - 1))
     st.session_state[gamma_idx_key] = gamma_idx
     st.session_state[n_idx_key] = n_idx
+    st.session_state[tau_local_n_idx_key] = tau_local_n_idx_for_gamma
+    st.session_state[tau_local_gamma_idx_key] = tau_local_gamma_idx_for_n
     st.session_state.setdefault(pattern_gamma_key, "")
     st.session_state.setdefault(pattern_n_key, "")
     base_param_values, invalid_params, conflict_params = _build_pattern_param_values(settings["function_config"])
@@ -604,6 +614,8 @@ def render_results_phase(algo_key: str, spec):
             "tau_grid": tau_grid_payload,
             "default_gamma_idx": gamma_idx,
             "default_n_idx": n_idx,
+            "default_local_n_idx_for_gamma": tau_local_n_idx_for_gamma,
+            "default_local_gamma_idx_for_n": tau_local_gamma_idx_for_n,
             "pattern_gamma": str(st.session_state.get(pattern_gamma_key, "")),
             "pattern_n": str(st.session_state.get(pattern_n_key, "")),
             "pattern_params": {name: float(value) for name, value in sorted(base_param_values.items())},
@@ -620,10 +632,16 @@ def render_results_phase(algo_key: str, spec):
             if event_id and st.session_state.get(cursor_event_key) != event_id:
                 next_gamma_idx = int(event.get("gamma_idx", gamma_idx))
                 next_n_idx = int(event.get("n_idx", n_idx))
+                next_local_n_idx_for_gamma = int(event.get("local_n_idx_for_gamma", tau_local_n_idx_for_gamma))
+                next_local_gamma_idx_for_n = int(event.get("local_gamma_idx_for_n", tau_local_gamma_idx_for_n))
                 st.session_state[pattern_gamma_key] = str(event.get("pattern_gamma", ""))
                 st.session_state[pattern_n_key] = str(event.get("pattern_n", ""))
                 st.session_state[gamma_idx_key] = max(0, min(next_gamma_idx, len(gamma_values) - 1))
                 st.session_state[n_idx_key] = max(0, min(next_n_idx, len(n_values) - 1))
+                st.session_state[tau_local_n_idx_key] = max(0, min(next_local_n_idx_for_gamma, len(n_values) - 1))
+                st.session_state[tau_local_gamma_idx_key] = max(
+                    0, min(next_local_gamma_idx_for_n, len(gamma_values) - 1)
+                )
                 st.session_state[cursor_event_key] = event_id
                 st.rerun()
         elif event_type == "metric":
@@ -659,8 +677,14 @@ def render_results_phase(algo_key: str, spec):
                 active_series_ids = tuple(sorted(set(event.get("selected_series_ids", []))))
                 deactivated_series_ids = list(dict.fromkeys(event.get("deactivated_series_ids", [])))
                 deactivated_labels = list(event.get("deactivated_labels", []))
+                next_local_n_idx_for_gamma = int(event.get("local_n_idx_for_gamma", tau_local_n_idx_for_gamma))
+                next_local_gamma_idx_for_n = int(event.get("local_gamma_idx_for_n", tau_local_gamma_idx_for_n))
                 st.session_state[pattern_gamma_key] = str(event.get("pattern_gamma", ""))
                 st.session_state[pattern_n_key] = str(event.get("pattern_n", ""))
+                st.session_state[tau_local_n_idx_key] = max(0, min(next_local_n_idx_for_gamma, len(n_values) - 1))
+                st.session_state[tau_local_gamma_idx_key] = max(
+                    0, min(next_local_gamma_idx_for_n, len(gamma_values) - 1)
+                )
                 with st.spinner("Recomputing tau grid with selected dual values..."):
                     recompute_result = compute(
                         algo_key,
