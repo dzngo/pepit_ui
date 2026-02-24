@@ -28,9 +28,13 @@ from utils import (
     _parse_float_input,
     _parse_float_list,
     build_dual_section_html,
+    build_dual_series_by_param,
     build_dual_series_data,
+    build_dual_slice_by_param,
+    build_tau_series_by_param,
     clear_algorithm_caches,
     compute,
+    compute_nd,
     discrete_values,
     dual_ranking_by_slice,
 )
@@ -692,6 +696,8 @@ def render_results_phase(algo_key: str, spec):
     if st.button("Change hyperparameter settings"):
         st.session_state["ui_phase"] = "config"
         st.rerun()
+    metric_state_key = f"dual-ranking-metric-{algo_key}"
+    metric = str(st.session_state.get(metric_state_key, "non_zero_pct_with_none"))
 
     with st.expander("Configuration details"):
         summary_lines = [
@@ -750,6 +756,8 @@ def render_results_phase(algo_key: str, spec):
     warning_messages = set(cached_warnings)
     runs = st.session_state.setdefault(_runs_key(algo_key), [])
     run_results: dict[str, tuple] = {}
+    run_tau_series_by_param: dict[str, dict[str, dict[str, object]]] = {}
+    run_series_data_by_param: dict[str, dict] = {}
     for run in runs:
         selected_series_ids = tuple(sorted(set(run.get("selected_series_ids", []))))
         if not selected_series_ids:
@@ -765,6 +773,28 @@ def render_results_phase(algo_key: str, spec):
             selected_dual_series_ids=selected_series_ids,
         )
         run_results[run["id"]] = run_result
+        run_nd_result = compute_nd(
+            algo_key,
+            settings["function_config"],
+            hyperparameter_specs,
+            show_progress=False,
+            rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
+            selected_dual_series_ids=selected_series_ids,
+        )
+        if run_nd_result is not None:
+            run_param_values, run_tau_nd, _, run_duals_nd = run_nd_result
+            run_tau_series_by_param[run["id"]] = build_tau_series_by_param(
+                hyperparameter_specs,
+                run_param_values,
+                run_tau_nd,
+                local_cursor_indices,
+            )
+            run_series_data_by_param[run["id"]] = build_dual_series_by_param(
+                run_duals_nd,
+                run_param_values,
+                hyperparameter_specs,
+                cursor_indices,
+            )
         if isinstance(run_result, tuple) and len(run_result) >= 4:
             for warning in run_result[3]:
                 warning_messages.add(f"{run['name']}: {warning}")
@@ -779,6 +809,67 @@ def render_results_phase(algo_key: str, spec):
             "Some parameter combinations could not be solved; missing points are shown as gaps.\n" + warning_text
         )
 
+    nd_result = compute_nd(
+        algo_key,
+        settings["function_config"],
+        hyperparameter_specs,
+        show_progress=False,
+        rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
+    )
+    tau_series_by_param: dict[str, dict[str, object]] = {}
+    series_data_by_param: dict[str, dict] = {}
+    sections_html_by_param: dict[str, str] = {}
+    plot_titles_by_param: dict[str, str] = {}
+    if nd_result is not None:
+        param_values_nd, tau_nd, _, duals_nd = nd_result
+        tau_series_by_param = build_tau_series_by_param(
+            hyperparameter_specs,
+            param_values_nd,
+            tau_nd,
+            local_cursor_indices,
+        )
+        series_data_by_param = build_dual_series_by_param(
+            duals_nd,
+            param_values_nd,
+            hyperparameter_specs,
+            cursor_indices,
+        )
+        axis_index = {hp.name: idx for idx, hp in enumerate(hyperparameter_specs)}
+        base_idx = []
+        for hp in hyperparameter_specs:
+            values = param_values_nd.get(hp.name, [])
+            max_idx = max(len(values) - 1, 0)
+            base_idx.append(max(0, min(int(cursor_indices.get(hp.name, 0)), max_idx)))
+        current_duals = duals_nd[tuple(base_idx)] if hyperparameter_specs else {}
+        for hp in hyperparameter_specs:
+            slice_duals = build_dual_slice_by_param(
+                duals_nd,
+                hyperparameter_specs,
+                cursor_indices,
+                hp.name,
+            )
+            ranking = dual_ranking_by_slice(slice_duals, metric=metric)
+            fixed_parts = []
+            for other_hp in hyperparameter_specs:
+                if other_hp.name == hp.name:
+                    continue
+                other_axis = axis_index[other_hp.name]
+                other_idx = base_idx[other_axis]
+                other_values = param_values_nd[other_hp.name]
+                if len(other_values):
+                    fixed_parts.append(f"{other_hp.name} = {other_values[other_idx]}")
+            fixed_text = ", ".join(fixed_parts) if fixed_parts else "no fixed parameters"
+            title = f"Ranking vs {hp.name} ({fixed_text})"
+            html_value, _ = build_dual_section_html(
+                section_id=f"{algo_key}-{hp.name}",
+                section_key=hp.name,
+                title=title,
+                dual_ranking=ranking,
+                current_duals=current_duals if isinstance(current_duals, dict) else {},
+            )
+            sections_html_by_param[hp.name] = html_value
+            plot_titles_by_param[hp.name] = f"Dual value vs {hp.name}"
+
     event = render_dual_values_panel(
         algo_key,
         duals_grid,
@@ -788,6 +879,8 @@ def render_results_phase(algo_key: str, spec):
         n_idx,
         runs,
         run_results,
+        run_tau_series_by_param,
+        run_series_data_by_param,
         tau_payload={
             "gamma_values": [float(value) for value in gamma_values],
             "n_values": [float(value) for value in n_values],
@@ -804,11 +897,15 @@ def render_results_phase(algo_key: str, spec):
                 "value_type": str(n_spec.value_type),
             },
             "tau_grid": tau_grid_payload,
+            "tau_series_by_param": tau_series_by_param,
             "param_order": [hp.name for hp in hyperparameter_specs],
             "param_values_by_name": param_values_by_name,
             "cursor_indices_by_param": {name: int(idx) for name, idx in cursor_indices.items()},
             "local_cursor_indices_by_param": {name: int(idx) for name, idx in local_cursor_indices.items()},
             "patterns_by_param": {name: str(value) for name, value in patterns_by_param.items()},
+            "sections_html_by_param": sections_html_by_param,
+            "plot_titles_by_param": plot_titles_by_param,
+            "series_data_by_param": series_data_by_param,
             "default_gamma_idx": gamma_idx,
             "default_n_idx": n_idx,
             "default_local_n_idx_for_gamma": tau_local_n_idx_for_gamma,
@@ -1026,6 +1123,8 @@ def render_dual_values_panel(
     n_idx: int,
     runs: list[dict],
     run_results: dict[str, tuple],
+    run_tau_series_by_param: dict[str, dict[str, dict[str, object]]],
+    run_series_data_by_param: dict[str, dict],
     tau_payload: dict,
 ) -> dict | None:
     if not duals_grid:
@@ -1105,6 +1204,8 @@ def render_dual_values_panel(
                     [float(value) if value is not None and np.isfinite(value) else None for value in row]
                     for row in run_result[2]
                 ],
+                "tau_series_by_param": run_tau_series_by_param.get(run["id"], {}),
+                "series_data_by_param": run_series_data_by_param.get(run["id"], {}),
                 "series_data": run_series_data,
             }
         )

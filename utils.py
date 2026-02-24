@@ -343,6 +343,146 @@ def _compute_nd(
     return nd_cache[nd_key]
 
 
+def compute_nd(
+    algo_key: str,
+    function_config: Dict[str, Dict[str, object]],
+    hyperparameter_specs: list[HyperparameterSpec],
+    *,
+    show_progress: bool,
+    rerun_nan_cache: bool = False,
+    selected_dual_series_ids: tuple[str, ...] | None = None,
+):
+    return _compute_nd(
+        algo_key,
+        function_config,
+        hyperparameter_specs,
+        show_progress=show_progress,
+        rerun_nan_cache=rerun_nan_cache,
+        selected_dual_series_ids=selected_dual_series_ids,
+    )
+
+
+def build_tau_series_by_param(
+    hyperparameter_specs: list[HyperparameterSpec],
+    param_values: dict[str, np.ndarray],
+    tau_nd: np.ndarray,
+    cursor_indices: dict[str, int],
+) -> dict[str, dict[str, object]]:
+    if not hyperparameter_specs:
+        return {}
+    axis_index = {hp.name: idx for idx, hp in enumerate(hyperparameter_specs)}
+    base_indices: list[int] = []
+    for hp in hyperparameter_specs:
+        values = np.asarray(param_values[hp.name])
+        max_idx = max(len(values) - 1, 0)
+        idx = int(cursor_indices.get(hp.name, value_index(float(hp.default), hp)))
+        base_indices.append(max(0, min(idx, max_idx)))
+
+    series_by_param: dict[str, dict[str, object]] = {}
+    for hp in hyperparameter_specs:
+        axis = axis_index[hp.name]
+        values = np.asarray(param_values[hp.name], dtype=float)
+        y_values: list[float | None] = []
+        for i in range(len(values)):
+            idx_tuple = list(base_indices)
+            idx_tuple[axis] = i
+            tau_val = float(tau_nd[tuple(idx_tuple)])
+            y_values.append(tau_val if np.isfinite(tau_val) else None)
+        series_by_param[hp.name] = {
+            "x_values": [float(v) for v in values],
+            "y_values": y_values,
+            "cursor_idx": int(base_indices[axis]),
+            "cursor_value": float(values[base_indices[axis]]) if len(values) else None,
+        }
+    return series_by_param
+
+
+def build_dual_slice_by_param(
+    duals_nd: np.ndarray,
+    hyperparameter_specs: list[HyperparameterSpec],
+    cursor_indices: dict[str, int],
+    param_name: str,
+) -> list[dict]:
+    if not hyperparameter_specs:
+        return []
+    axis_index = {hp.name: idx for idx, hp in enumerate(hyperparameter_specs)}
+    if param_name not in axis_index:
+        return []
+    base_indices: list[int] = []
+    for hp in hyperparameter_specs:
+        total = int(round((hp.max_value - hp.min_value) / hp.step))
+        idx = int(cursor_indices.get(hp.name, value_index(float(hp.default), hp)))
+        base_indices.append(int(min(max(idx, 0), total)))
+    axis = axis_index[param_name]
+    length = duals_nd.shape[axis]
+    out: list[dict] = []
+    for i in range(length):
+        idx_tuple = list(base_indices)
+        idx_tuple[axis] = i
+        value = duals_nd[tuple(idx_tuple)]
+        out.append(value if isinstance(value, dict) else {})
+    return out
+
+
+def build_dual_series_by_param(
+    duals_nd: np.ndarray,
+    param_values: dict[str, np.ndarray],
+    hyperparameter_specs: list[HyperparameterSpec],
+    cursor_indices: dict[str, int],
+) -> dict:
+    if not hyperparameter_specs:
+        return {}
+    axis_index = {hp.name: idx for idx, hp in enumerate(hyperparameter_specs)}
+    base_indices: list[int] = []
+    for hp in hyperparameter_specs:
+        values = np.asarray(param_values[hp.name])
+        max_idx = max(len(values) - 1, 0)
+        idx = int(cursor_indices.get(hp.name, value_index(float(hp.default), hp)))
+        base_indices.append(max(0, min(idx, max_idx)))
+
+    series_meta: dict[str, tuple[str, str]] = {}
+    for idx_tuple in np.ndindex(duals_nd.shape):
+        point = duals_nd[idx_tuple]
+        if not isinstance(point, dict):
+            continue
+        for constraint, values in point.items():
+            for dual_key in values.keys():
+                series_meta[_dual_series_id(constraint, dual_key)] = (constraint, dual_key)
+
+    series_data: dict[str, dict] = {}
+    for series_id, (constraint, dual_key) in series_meta.items():
+        by_param: dict[str, dict[str, object]] = {}
+        for hp in hyperparameter_specs:
+            axis = axis_index[hp.name]
+            x_vals = np.asarray(param_values[hp.name], dtype=float)
+            y_vals: list[float | None] = []
+            for i in range(len(x_vals)):
+                idx_tuple = list(base_indices)
+                idx_tuple[axis] = i
+                point = duals_nd[tuple(idx_tuple)]
+                if not isinstance(point, dict):
+                    y_vals.append(None)
+                    continue
+                val = point.get(constraint, {}).get(dual_key)
+                if val is None or not np.isfinite(val):
+                    y_vals.append(None)
+                else:
+                    y_vals.append(float(val))
+            clean = [v for v in y_vals if v is not None and np.isfinite(v)]
+            by_param[hp.name] = {
+                "x_values": [float(v) for v in x_vals],
+                "y_values": y_vals,
+                "all_zero": bool(clean) and all(abs(v) <= 1e-12 for v in clean),
+            }
+        series_data[series_id] = {
+            "constraint": constraint,
+            "dual_key": dual_key,
+            "label": f"{constraint} | {dual_key}",
+            "by_param": by_param,
+        }
+    return series_data
+
+
 def compute(
     algo_key: str,
     gamma_spec: HyperparameterSpec,

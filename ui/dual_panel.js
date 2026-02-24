@@ -2,28 +2,41 @@ export default function(component) {
   const { data, parentElement, setTriggerValue } = component;
 
   const seriesData = (data && data.series_data) || {};
+  const seriesDataByParam = (data && data.series_data_by_param) || {};
   const rawDualRuns = (data && data.dual_runs) || [];
   const tauPayload = (data && data.tau_payload) || {};
+  const sectionsHtmlByParam = (tauPayload && tauPayload.sections_html_by_param) || {};
+  const plotTitlesByParam = (tauPayload && tauPayload.plot_titles_by_param) || {};
   const metricLabels = (data && data.metric_labels) || {};
   const metricKeys = Object.keys(metricLabels);
   const currentMetric = (data && data.metric) || 'non_zero_pct_with_none';
 
   const plotSelectionMap = new Map();
   const deactivatedForRecompute = new Map();
-  const selectedPlotCards = { gamma: new Set(), n: new Set() };
+  const selectedPlotCards = new Map();
   const overlayState = new Map();
   const overlayDebounce = new Map();
   const dualTraceRegistry = new Map();
-  const tauTraceRegistry = { gamma: new Map(), n: new Map() };
+  const tauTraceRegistry = new Map();
   let hideZero = true;
   let actionTab = 'plot';
 
   const gammaValues = Array.isArray(tauPayload.gamma_values) ? tauPayload.gamma_values : [];
   const nValues = Array.isArray(tauPayload.n_values) ? tauPayload.n_values : [];
   const tauGrid = Array.isArray(tauPayload.tau_grid) ? tauPayload.tau_grid : [];
+  const tauSeriesByParam = (tauPayload && tauPayload.tau_series_by_param) || {};
+  const paramOrder = Array.isArray(tauPayload.param_order) ? tauPayload.param_order : [];
+  const dualParams = (paramOrder.length ? paramOrder : ['gamma', 'n']).filter((name, idx, arr) => arr.indexOf(name) === idx);
+  dualParams.forEach((name) => selectedPlotCards.set(name, new Set()));
+  const paramValuesByName = (tauPayload && tauPayload.param_values_by_name) || {};
+  const cursorIndicesByParamPayload = (tauPayload && tauPayload.cursor_indices_by_param) || {};
+  const localCursorIndicesByParamPayload = (tauPayload && tauPayload.local_cursor_indices_by_param) || {};
+  const patternsByParamPayload = (tauPayload && tauPayload.patterns_by_param) || {};
   const patternParams = (tauPayload && tauPayload.pattern_params) || {};
   const patternInvalidParams = Array.isArray(tauPayload.pattern_invalid_params) ? tauPayload.pattern_invalid_params : [];
   const patternConflictParams = Array.isArray(tauPayload.pattern_conflict_params) ? tauPayload.pattern_conflict_params : [];
+  const initialPatternGamma = String(patternsByParamPayload.gamma ?? tauPayload.pattern_gamma ?? '');
+  const initialPatternN = String(patternsByParamPayload.n ?? tauPayload.pattern_n ?? '');
 
   const RUN_COLORS = ['#0ea5e9', '#14b8a6', '#e11d48', '#f4ec0b', '#22c55e', '#ef4444', '#3b82f6', '#84cc16', '#a855f7'];
 
@@ -200,51 +213,143 @@ export default function(component) {
     }).join('');
   }
 
+  function dualSectionsHtml() {
+    if (!dualParams.length) return '';
+    return dualParams.map((param) => {
+      let sectionHtml = sectionsHtmlByParam[param] || '';
+      if (!sectionHtml && param === 'gamma') sectionHtml = data.gamma_html || '';
+      if (!sectionHtml && param === 'n') sectionHtml = data.n_html || '';
+      return `<div class="dual-panel"><div class="dual-section" data-param-section="${escapeHtml(param)}">${sectionHtml}</div></div>`;
+    }).join('');
+  }
+
+  function dualPlotsHtml() {
+    if (!dualParams.length) return '';
+    return dualParams.map((param) => {
+      const safeParam = sanitizeId(param);
+      const defaultTitle = `Dual value vs ${param}`;
+      const title = plotTitlesByParam[param] || (param === 'gamma' ? data.plot_title_gamma : (param === 'n' ? data.plot_title_n : defaultTitle));
+      return (
+        `<div class="dual-panel">` +
+          `<div class="dual-plot-section">` +
+            `<div class="dual-plot-title">${escapeHtml(title || defaultTitle)}</div>` +
+            `<div id="dual-plot-${safeParam}" class="dual-plot-sections" data-param="${escapeHtml(param)}"></div>` +
+            `<div class="dual-plot-actions dual-plot-actions-inline">` +
+              `<button type="button" class="dual-remove-button" data-param="${escapeHtml(param)}" id="dual-remove-${safeParam}" style="display:none;">Remove selected dual values</button>` +
+            `</div>` +
+          `</div>` +
+        `</div>`
+      );
+    }).join('');
+  }
+
+  function clampIdx(value, maxIdx) {
+    return Math.min(Math.max(Number(value || 0), 0), Math.max(maxIdx, 0));
+  }
+
+  function currentCursorIndicesByParam() {
+    const indices = {};
+    if (paramOrder.length) {
+      paramOrder.forEach((name) => {
+        const values = Array.isArray(paramValuesByName[name]) ? paramValuesByName[name] : [];
+        const fallback = name === 'gamma' ? globalGammaIdx : (name === 'n' ? globalNIdx : 0);
+        indices[name] = clampIdx(cursorIndicesByParamState[name] ?? fallback, values.length - 1);
+      });
+      indices.gamma = clampIdx(globalGammaIdx, gammaValues.length - 1);
+      indices.n = clampIdx(globalNIdx, nValues.length - 1);
+      return indices;
+    }
+    return {
+      gamma: clampIdx(globalGammaIdx, gammaValues.length - 1),
+      n: clampIdx(globalNIdx, nValues.length - 1),
+    };
+  }
+
+  function currentLocalCursorIndicesByParam() {
+    const indices = {};
+    if (paramOrder.length) {
+      paramOrder.forEach((name) => {
+        const values = Array.isArray(paramValuesByName[name]) ? paramValuesByName[name] : [];
+        const fallback = name === 'gamma' ? localGammaIdxForNPlot : (name === 'n' ? localNIdxForGammaPlot : currentCursorIndicesByParam()[name]);
+        indices[name] = clampIdx(localCursorIndicesByParamState[name] ?? fallback, values.length - 1);
+      });
+      indices.gamma = clampIdx(localGammaIdxForNPlot, gammaValues.length - 1);
+      indices.n = clampIdx(localNIdxForGammaPlot, nValues.length - 1);
+      return indices;
+    }
+    return {
+      gamma: clampIdx(localGammaIdxForNPlot, gammaValues.length - 1),
+      n: clampIdx(localNIdxForGammaPlot, nValues.length - 1),
+    };
+  }
+
+  function currentPatternsByParam() {
+    const patterns = { ...patternsByParamPayload };
+    if (tauPatternInputsByParam && tauPatternInputsByParam.size) {
+      tauPatternInputsByParam.forEach((inputEl, param) => {
+        patterns[param] = inputEl ? String(inputEl.value || '') : String(patterns[param] || '');
+      });
+    } else {
+      patterns.gamma = tauPatternGammaInput ? tauPatternGammaInput.value : initialPatternGamma;
+      patterns.n = tauPatternNInput ? tauPatternNInput.value : initialPatternN;
+    }
+    return patterns;
+  }
+
+  function extraLocalSlidersHtml(axisParam) {
+    const skip = new Set([axisParam]);
+    const items = dualParams.filter((name) => !skip.has(name));
+    if (!items.length) return '';
+    return items.map((name) => {
+      const values = Array.isArray(paramValuesByName[name]) ? paramValuesByName[name] : [];
+      const maxIdx = Math.max(values.length - 1, 0);
+      const defaultIdx = clampIdx(localCursorIndicesByParamPayload[name] ?? cursorIndicesByParamPayload[name] ?? 0, maxIdx);
+      return (
+        `<div style="display:flex;align-items:center;gap:8px;">` +
+          `<strong>Local ${escapeHtml(name)}</strong>` +
+          `<input type="range" class="tau-local-slider" data-axis-param="${escapeHtml(axisParam)}" data-param="${escapeHtml(name)}" min="0" max="${maxIdx}" step="1" value="${defaultIdx}" style="flex:1;" />` +
+          `<span class="tau-local-value" data-axis-param="${escapeHtml(axisParam)}" data-param="${escapeHtml(name)}"></span>` +
+        `</div>`
+      );
+    }).join('');
+  }
+
+  function tauPanelsHtml() {
+    if (!dualParams.length) return '';
+    return dualParams.map((axisParam) => {
+      const safeAxis = sanitizeId(axisParam);
+      const axisValues = Array.isArray(paramValuesByName[axisParam]) ? paramValuesByName[axisParam] : [];
+      const globalIdx = clampIdx(cursorIndicesByParamPayload[axisParam] ?? 0, axisValues.length - 1);
+      const patternValue = String(
+        patternsByParamPayload[axisParam] ?? (axisParam === 'gamma' ? initialPatternGamma : (axisParam === 'n' ? initialPatternN : '')),
+      );
+      return (
+        `<div class="dual-panel">` +
+          `<div class="dual-plot-section">` +
+            `${extraLocalSlidersHtml(axisParam)}` +
+            `<div id="tau-plot-${safeAxis}" class="dual-plot-chart" style="min-height:320px;"></div>` +
+            `<div class="tau-global-control">` +
+              `<div style="display:flex;align-items:center;gap:8px;">` +
+                `<strong>Global ${escapeHtml(axisParam)}</strong>` +
+                `<input type="range" class="tau-global-slider" data-param="${escapeHtml(axisParam)}" min="0" max="${Math.max(axisValues.length - 1, 0)}" step="1" value="${globalIdx}" style="flex:1;" />` +
+                `<span class="tau-global-value" data-param="${escapeHtml(axisParam)}"></span>` +
+              `</div>` +
+            `</div>` +
+            `<input class="dual-overlay-input tau-pattern-input" data-param="${escapeHtml(axisParam)}" type="text" value="${escapeHtml(patternValue)}" placeholder="${randomOverlayPlaceholder()}" style="display:block;">` +
+            `<div class="tau-pattern-hint" data-param="${escapeHtml(axisParam)}" style="font-size:12px;color:#666;"></div>` +
+            `<div class="tau-pattern-error" data-param="${escapeHtml(axisParam)}" style="font-size:12px;color:#cb0000;min-height:16px;"></div>` +
+          `</div>` +
+        `</div>`
+      );
+    }).join('');
+  }
+
   parentElement.innerHTML = `
     <style>${data.css || ''}</style>
     <div class="dual-wrapper">
       <div class="dual-section-title">Worst-case guarantee</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px;">
-        <div class="dual-panel">
-          <div class="dual-plot-section">
-            <div style="display:flex;align-items:center;gap:8px;">
-              <strong>Local n</strong>
-              <input type="range" id="tau-local-n-for-gamma-slider" min="0" max="${Math.max(nValues.length - 1, 0)}" step="1" value="${Math.min(Math.max(Number((tauPayload.default_local_n_idx_for_gamma ?? tauPayload.default_n_idx ?? 0)), 0), Math.max(nValues.length - 1, 0))}" style="flex:1;" />
-              <span id="tau-local-n-for-gamma-value"></span>
-            </div>
-            <div id="tau-plot-gamma" class="dual-plot-chart" style="min-height:320px;"></div>
-            <div class="tau-global-control">
-              <div style="display:flex;align-items:center;gap:8px;">
-                <strong>Global gamma</strong>
-                <input type="range" id="tau-global-gamma-slider" min="0" max="${Math.max(gammaValues.length - 1, 0)}" step="1" value="${Math.min(Math.max(Number(tauPayload.default_gamma_idx || 0), 0), Math.max(gammaValues.length - 1, 0))}" style="flex:1;" />
-                <span id="tau-global-gamma-value"></span>
-              </div>
-            </div>
-            <input class="dual-overlay-input" id="tau-pattern-gamma" type="text" value="${escapeHtml(String(tauPayload.pattern_gamma || ''))}" placeholder="${randomOverlayPlaceholder()}" style="display:block;">
-            <div id="tau-pattern-gamma-hint" style="font-size:12px;color:#666;"></div>
-            <div id="tau-pattern-gamma-error" style="font-size:12px;color:#cb0000;min-height:16px;"></div>
-          </div>
-        </div>
-        <div class="dual-panel">
-          <div class="dual-plot-section">
-            <div style="display:flex;align-items:center;gap:8px;">
-              <strong>Local gamma</strong>
-              <input type="range" id="tau-local-gamma-for-n-slider" min="0" max="${Math.max(gammaValues.length - 1, 0)}" step="1" value="${Math.min(Math.max(Number((tauPayload.default_local_gamma_idx_for_n ?? tauPayload.default_gamma_idx ?? 0)), 0), Math.max(gammaValues.length - 1, 0))}" style="flex:1;" />
-              <span id="tau-local-gamma-for-n-value"></span>
-            </div>
-            <div id="tau-plot-n" class="dual-plot-chart" style="min-height:320px;"></div>
-            <div class="tau-global-control">
-              <div style="display:flex;align-items:center;gap:8px;">
-                <strong>Global n</strong>
-                <input type="range" id="tau-global-n-slider" min="0" max="${Math.max(nValues.length - 1, 0)}" step="1" value="${Math.min(Math.max(Number(tauPayload.default_n_idx || 0), 0), Math.max(nValues.length - 1, 0))}" style="flex:1;" />
-                <span id="tau-global-n-value"></span>
-              </div>
-            </div>
-            <input class="dual-overlay-input" id="tau-pattern-n" type="text" value="${escapeHtml(String(tauPayload.pattern_n || ''))}" placeholder="${randomOverlayPlaceholder()}" style="display:block;">
-            <div id="tau-pattern-n-hint" style="font-size:12px;color:#666;"></div>
-            <div id="tau-pattern-n-error" style="font-size:12px;color:#cb0000;min-height:16px;"></div>
-          </div>
-        </div>
+        ${tauPanelsHtml()}
       </div>
       <div class="dual-section-title">Recompute Runs</div>
       <div class="dual-panel">
@@ -260,8 +365,7 @@ export default function(component) {
         <button type="button" class="dual-toggle-button is-active" id="dual-toggle-zero">Show all-zero duals</button>
       </div>
       </div>
-      <div class="dual-panel"><div class="dual-section">${data.gamma_html || ''}</div></div>
-      <div class="dual-panel"><div class="dual-section">${data.n_html || ''}</div></div>
+      ${dualSectionsHtml()}
       <div class="dual-tabs" role="tablist" aria-label="Dual action tabs">
         <button
           type="button"
@@ -301,24 +405,7 @@ export default function(component) {
           <button type="button" class="dual-toggle-button is-active" id="dual-deactivate-all">Deactivate all</button>
         </div>
       </div>
-      <div class="dual-panel">
-        <div class="dual-plot-section">
-          <div class="dual-plot-title">${escapeHtml(data.plot_title_gamma || '')}</div>
-          <div id="dual-plot-gamma" class="dual-plot-sections"></div>
-          <div class="dual-plot-actions dual-plot-actions-inline">
-            <button type="button" class="dual-remove-button" id="dual-remove-gamma" style="display:none;">Remove selected dual values</button>
-          </div>
-        </div>
-      </div>
-      <div class="dual-panel">
-        <div class="dual-plot-section">
-          <div class="dual-plot-title">${escapeHtml(data.plot_title_n || '')}</div>
-          <div id="dual-plot-n" class="dual-plot-sections"></div>
-          <div class="dual-plot-actions dual-plot-actions-inline">
-            <button type="button" class="dual-remove-button" id="dual-remove-n" style="display:none;">Remove selected dual values</button>
-          </div>
-        </div>
-      </div>
+      ${dualPlotsHtml()}
     </div>
   `;
 
@@ -332,32 +419,86 @@ export default function(component) {
   const plotBtn = root.querySelector('#dual-plot');
   const overlayBtn = root.querySelector('#dual-overlay');
   const clearBtn = root.querySelector('#dual-clear');
-  const removeGammaBtn = root.querySelector('#dual-remove-gamma');
-  const removeNBtn = root.querySelector('#dual-remove-n');
+  const removeButtonsByParam = new Map(dualParams.map((param) => [param, root.querySelector(`#dual-remove-${sanitizeId(param)}`)]));
   const recomputeBtn = root.querySelector('#dual-recompute');
   const activateAllBtn = root.querySelector('#dual-activate-all');
   const deactivateAllBtn = root.querySelector('#dual-deactivate-all');
-  const tauLocalNForGammaSlider = root.querySelector('#tau-local-n-for-gamma-slider');
-  const tauLocalGammaForNSlider = root.querySelector('#tau-local-gamma-for-n-slider');
-  const tauGlobalGammaSlider = root.querySelector('#tau-global-gamma-slider');
-  const tauGlobalNSlider = root.querySelector('#tau-global-n-slider');
-  const tauLocalNForGammaValue = root.querySelector('#tau-local-n-for-gamma-value');
-  const tauLocalGammaForNValue = root.querySelector('#tau-local-gamma-for-n-value');
-  const tauGlobalGammaValue = root.querySelector('#tau-global-gamma-value');
-  const tauGlobalNValue = root.querySelector('#tau-global-n-value');
-  const tauPatternGammaInput = root.querySelector('#tau-pattern-gamma');
-  const tauPatternNInput = root.querySelector('#tau-pattern-n');
-  const tauPatternGammaHint = root.querySelector('#tau-pattern-gamma-hint');
-  const tauPatternNHint = root.querySelector('#tau-pattern-n-hint');
-  const tauPatternGammaError = root.querySelector('#tau-pattern-gamma-error');
-  const tauPatternNError = root.querySelector('#tau-pattern-n-error');
+  const tauGlobalSlidersByParam = new Map();
+  const tauGlobalValuesByParam = new Map();
+  const tauLocalSliders = Array.from(root.querySelectorAll('.tau-local-slider'));
+  const tauLocalValues = Array.from(root.querySelectorAll('.tau-local-value'));
+  const tauPatternInputsByParam = new Map();
+  const tauPatternHintsByParam = new Map();
+  const tauPatternErrorsByParam = new Map();
+  dualParams.forEach((param) => {
+    tauGlobalSlidersByParam.set(param, root.querySelector(`.tau-global-slider[data-param="${param}"]`));
+    tauGlobalValuesByParam.set(param, root.querySelector(`.tau-global-value[data-param="${param}"]`));
+    tauPatternInputsByParam.set(param, root.querySelector(`.tau-pattern-input[data-param="${param}"]`));
+    tauPatternHintsByParam.set(param, root.querySelector(`.tau-pattern-hint[data-param="${param}"]`));
+    tauPatternErrorsByParam.set(param, root.querySelector(`.tau-pattern-error[data-param="${param}"]`));
+  });
+  const tauLocalNForGammaSlider = tauLocalSliders.find((el) => el.getAttribute('data-axis-param') === 'gamma' && el.getAttribute('data-param') === 'n') || null;
+  const tauLocalGammaForNSlider = tauLocalSliders.find((el) => el.getAttribute('data-axis-param') === 'n' && el.getAttribute('data-param') === 'gamma') || null;
+  const tauGlobalGammaSlider = tauGlobalSlidersByParam.get('gamma') || null;
+  const tauGlobalNSlider = tauGlobalSlidersByParam.get('n') || null;
+  const tauLocalNForGammaValue = tauLocalValues.find((el) => el.getAttribute('data-axis-param') === 'gamma' && el.getAttribute('data-param') === 'n') || null;
+  const tauLocalGammaForNValue = tauLocalValues.find((el) => el.getAttribute('data-axis-param') === 'n' && el.getAttribute('data-param') === 'gamma') || null;
+  const tauGlobalGammaValue = tauGlobalValuesByParam.get('gamma') || null;
+  const tauGlobalNValue = tauGlobalValuesByParam.get('n') || null;
+  const tauPatternGammaInput = tauPatternInputsByParam.get('gamma') || null;
+  const tauPatternNInput = tauPatternInputsByParam.get('n') || null;
+  const tauPatternGammaHint = tauPatternHintsByParam.get('gamma') || null;
+  const tauPatternNHint = tauPatternHintsByParam.get('n') || null;
+  const tauPatternGammaError = tauPatternErrorsByParam.get('gamma') || null;
+  const tauPatternNError = tauPatternErrorsByParam.get('n') || null;
   const metricSelect = root.querySelector('#dual-ranking-metric');
 
-  let globalGammaIdx = tauGlobalGammaSlider ? Number(tauGlobalGammaSlider.value) : 0;
-  let globalNIdx = tauGlobalNSlider ? Number(tauGlobalNSlider.value) : 0;
-  let localNIdxForGammaPlot = tauLocalNForGammaSlider ? Number(tauLocalNForGammaSlider.value) : globalNIdx;
-  let localGammaIdxForNPlot = tauLocalGammaForNSlider ? Number(tauLocalGammaForNSlider.value) : globalGammaIdx;
-  let lastCursorEventKey = `${globalGammaIdx}:${globalNIdx}`;
+  let globalGammaIdx = clampIdx(
+    cursorIndicesByParamPayload.gamma ?? (tauGlobalGammaSlider ? Number(tauGlobalGammaSlider.value) : 0),
+    gammaValues.length - 1,
+  );
+  let globalNIdx = clampIdx(
+    cursorIndicesByParamPayload.n ?? (tauGlobalNSlider ? Number(tauGlobalNSlider.value) : 0),
+    nValues.length - 1,
+  );
+  let localNIdxForGammaPlot = clampIdx(
+    localCursorIndicesByParamPayload.n ?? (tauLocalNForGammaSlider ? Number(tauLocalNForGammaSlider.value) : globalNIdx),
+    nValues.length - 1,
+  );
+  let localGammaIdxForNPlot = clampIdx(
+    localCursorIndicesByParamPayload.gamma ?? (tauLocalGammaForNSlider ? Number(tauLocalGammaForNSlider.value) : globalGammaIdx),
+    gammaValues.length - 1,
+  );
+  let cursorIndicesByParamState = { ...cursorIndicesByParamPayload, gamma: globalGammaIdx, n: globalNIdx };
+  let localCursorIndicesByParamState = { ...localCursorIndicesByParamPayload, gamma: localGammaIdxForNPlot, n: localNIdxForGammaPlot };
+  dualParams.forEach((name) => {
+    const values = Array.isArray(paramValuesByName[name]) ? paramValuesByName[name] : [];
+    cursorIndicesByParamState[name] = clampIdx(cursorIndicesByParamState[name] ?? 0, values.length - 1);
+    localCursorIndicesByParamState[name] = clampIdx(localCursorIndicesByParamState[name] ?? cursorIndicesByParamState[name], values.length - 1);
+  });
+  if (tauGlobalGammaSlider) tauGlobalGammaSlider.value = String(globalGammaIdx);
+  if (tauGlobalNSlider) tauGlobalNSlider.value = String(globalNIdx);
+  if (tauLocalNForGammaSlider) tauLocalNForGammaSlider.value = String(localNIdxForGammaPlot);
+  if (tauLocalGammaForNSlider) tauLocalGammaForNSlider.value = String(localGammaIdxForNPlot);
+  tauGlobalSlidersByParam.forEach((slider, param) => {
+    if (!slider) return;
+    const values = Array.isArray(paramValuesByName[param]) ? paramValuesByName[param] : [];
+    const idx = clampIdx(cursorIndicesByParamState[param] ?? 0, values.length - 1);
+    slider.value = String(idx);
+  });
+  tauLocalSliders.forEach((slider) => {
+    const param = slider.getAttribute('data-param');
+    if (!param) return;
+    const values = Array.isArray(paramValuesByName[param]) ? paramValuesByName[param] : [];
+    const idx = clampIdx(localCursorIndicesByParamState[param] ?? 0, values.length - 1);
+    slider.value = String(idx);
+  });
+  let lastCursorEventKey = JSON.stringify({
+    g: globalGammaIdx,
+    n: globalNIdx,
+    local: currentLocalCursorIndicesByParam(),
+    patterns: currentPatternsByParam(),
+  });
 
   function visibleButtonsForPlot() {
     return Array.from(root.querySelectorAll('.dual-button:not(.is-hidden)'));
@@ -425,10 +566,11 @@ export default function(component) {
   }
 
   function updateRemoveButtons() {
-    const hasSelection = selectedPlotCards.gamma.size || selectedPlotCards.n.size;
+    const hasSelection = Array.from(selectedPlotCards.values()).some((setRef) => setRef.size);
     const display = hasSelection ? 'inline-flex' : 'none';
-    if (removeGammaBtn) removeGammaBtn.style.display = display;
-    if (removeNBtn) removeNBtn.style.display = display;
+    removeButtonsByParam.forEach((btn) => {
+      if (btn) btn.style.display = display;
+    });
   }
 
   function updateOverlayButtonVisibility(show) {
@@ -509,28 +651,35 @@ export default function(component) {
     const axis = input.getAttribute('data-axis');
     const plotId = input.getAttribute('data-plot-id');
     const seriesId = input.getAttribute('data-series-id');
-    const series = seriesData[seriesId];
-    if (!series || !axis || !plotId) return;
+    const legacy = seriesData[seriesId];
+    const generic = seriesDataByParam[seriesId];
+    if ((!legacy && !generic) || !axis || !plotId) return;
     const rawExpr = normalizeExpression(input.value);
     if (!rawExpr) {
       input.classList.remove('is-error');
       updateOverlayTrace(plotId, [], [], '');
       return;
     }
-    const xValues = axis === 'gamma' ? series.gamma_values : series.n_values;
+    let xValues = [];
+    if (generic && generic.by_param && generic.by_param[axis]) {
+      xValues = generic.by_param[axis].x_values || [];
+    } else if (legacy) {
+      xValues = axis === 'gamma' ? legacy.gamma_values : (axis === 'n' ? legacy.n_values : []);
+    }
     const result = buildOverlayYValues(rawExpr, xValues, (x) => {
       const scope = { x };
       Object.entries(patternParams).forEach(([name, value]) => {
         const numeric = Number(value);
         if (Number.isFinite(numeric)) scope[name] = numeric;
       });
+      scope.gamma = Number(gammaValues[globalGammaIdx]);
+      scope.n = Number(nValues[globalNIdx]);
       if (axis === 'gamma') {
         scope.gamma = Number(x);
-        scope.n = Number(nValues[globalNIdx]);
-      } else {
+      } else if (axis === 'n') {
         scope.n = Number(x);
-        scope.gamma = Number(gammaValues[globalGammaIdx]);
       }
+      scope[axis] = Number(x);
       return scope;
     });
     updateOverlayTrace(plotId, xValues, result.yValues, rawExpr);
@@ -548,11 +697,12 @@ export default function(component) {
 
   function applyRunVisibilityToTau() {
     if (!window.Plotly) return;
-    ['gamma', 'n'].forEach((axis) => {
-      const plotId = axis === 'gamma' ? 'tau-plot-gamma' : 'tau-plot-n';
+    dualParams.forEach((axis) => {
+      const plotId = `tau-plot-${sanitizeId(axis)}`;
       const plotDiv = root.querySelector(`#${plotId}`);
       if (!plotDiv) return;
-      tauTraceRegistry[axis].forEach((traceIndex, runId) => {
+      const runMap = tauTraceRegistry.get(axis) || new Map();
+      runMap.forEach((traceIndex, runId) => {
         const visible = runVisibility.get(runId) !== false;
         Plotly.restyle(plotDiv, { visible: visible ? true : 'legendonly' }, [traceIndex]);
       });
@@ -588,19 +738,39 @@ export default function(component) {
     return grid[rowIdx].map((value) => value ?? null);
   }
 
+  function tauSeriesForParam(paramName, fallbackX, fallbackY, fallbackCursorIdx) {
+    const payload = tauSeriesByParam[paramName];
+    if (!payload || !Array.isArray(payload.x_values) || !Array.isArray(payload.y_values)) {
+      return {
+        xValues: fallbackX,
+        yValues: fallbackY,
+        cursorIdx: fallbackCursorIdx,
+      };
+    }
+    const cursorIdx = (paramName === 'gamma' || paramName === 'n')
+      ? fallbackCursorIdx
+      : (Number.isFinite(Number(payload.cursor_idx)) ? Number(payload.cursor_idx) : fallbackCursorIdx);
+    return {
+      xValues: payload.x_values,
+      yValues: payload.y_values,
+      cursorIdx,
+    };
+  }
+
   function updateTauLabels() {
-    if (tauLocalNForGammaValue) {
-      tauLocalNForGammaValue.textContent = nValues[localNIdxForGammaPlot] !== undefined ? String(nValues[localNIdxForGammaPlot]) : '';
-    }
-    if (tauLocalGammaForNValue) {
-      tauLocalGammaForNValue.textContent = gammaValues[localGammaIdxForNPlot] !== undefined ? String(gammaValues[localGammaIdxForNPlot]) : '';
-    }
-    if (tauGlobalGammaValue) {
-      tauGlobalGammaValue.textContent = gammaValues[globalGammaIdx] !== undefined ? String(gammaValues[globalGammaIdx]) : '';
-    }
-    if (tauGlobalNValue) {
-      tauGlobalNValue.textContent = nValues[globalNIdx] !== undefined ? String(nValues[globalNIdx]) : '';
-    }
+    tauGlobalValuesByParam.forEach((valueEl, param) => {
+      if (!valueEl) return;
+      const values = Array.isArray(paramValuesByName[param]) ? paramValuesByName[param] : [];
+      const idx = clampIdx(cursorIndicesByParamState[param] ?? 0, values.length - 1);
+      valueEl.textContent = values[idx] !== undefined ? String(values[idx]) : '';
+    });
+    tauLocalValues.forEach((valueEl) => {
+      const param = valueEl.getAttribute('data-param');
+      if (!param) return;
+      const values = Array.isArray(paramValuesByName[param]) ? paramValuesByName[param] : [];
+      const idx = clampIdx(localCursorIndicesByParamState[param] ?? 0, values.length - 1);
+      valueEl.textContent = values[idx] !== undefined ? String(values[idx]) : '';
+    });
   }
 
   function buildPatternHintText(primaryAxisName) {
@@ -611,8 +781,7 @@ export default function(component) {
     const parts = [`Available parameters: ${paramsHint}.`];
     if (patternInvalidParams.length) parts.push(`Ignored (non-scalar): ${patternInvalidParams.join(', ')}.`);
     if (patternConflictParams.length) parts.push(`Conflicts: ${patternConflictParams.join(', ')}.`);
-    if (primaryAxisName === 'gamma') parts.push('Variables: x, gamma, n (local n slider value).');
-    else parts.push('Variables: x, n, gamma (local gamma slider value).');
+    parts.push(`Variables: x, ${dualParams.join(', ')}. Axis '${primaryAxisName}' uses x.`);
     return parts.join(' ');
   }
 
@@ -626,7 +795,8 @@ export default function(component) {
     } catch (err) {
       return { yValues: null, error: `Invalid expression: ${err.message || err}` };
     }
-    const xValues = axis === 'gamma' ? gammaValues : nValues;
+    const axisValues = Array.isArray(paramValuesByName[axis]) ? paramValuesByName[axis] : [];
+    const xValues = axisValues;
     const yValues = [];
     let hasFinite = false;
     for (let i = 0; i < xValues.length; i += 1) {
@@ -640,15 +810,15 @@ export default function(component) {
         const numeric = Number(value);
         if (Number.isFinite(numeric)) scope[name] = numeric;
       });
-      if (axis === 'gamma') {
-        scope.x = x;
-        scope.gamma = x;
-        scope.n = Number(nValues[localNIdxForGammaPlot]);
-      } else {
-        scope.x = x;
-        scope.n = x;
-        scope.gamma = Number(gammaValues[localGammaIdxForNPlot]);
-      }
+      dualParams.forEach((param) => {
+        const values = Array.isArray(paramValuesByName[param]) ? paramValuesByName[param] : [];
+        const idx = clampIdx(localCursorIndicesByParamState[param] ?? cursorIndicesByParamState[param] ?? 0, values.length - 1);
+        scope[param] = values[idx] !== undefined ? Number(values[idx]) : null;
+      });
+      scope.x = x;
+      scope[axis] = x;
+      if (!Number.isFinite(Number(scope.gamma))) scope.gamma = Number(gammaValues[globalGammaIdx] ?? 0);
+      if (!Number.isFinite(Number(scope.n))) scope.n = Number(nValues[globalNIdx] ?? 0);
       try {
         const value = compiled.evaluate(scope);
         const numeric = typeof value === 'number' ? value : Number(value);
@@ -668,168 +838,137 @@ export default function(component) {
 
   function renderTauPlots() {
     if (!window.Plotly) return;
-    const gammaPlot = root.querySelector('#tau-plot-gamma');
-    const nPlot = root.querySelector('#tau-plot-n');
-    if (!gammaPlot || !nPlot) return;
+    dualParams.forEach((axisParam) => {
+      const plotId = `tau-plot-${sanitizeId(axisParam)}`;
+      const plotDiv = root.querySelector(`#${plotId}`);
+      if (!plotDiv) return;
 
-    tauTraceRegistry.gamma.clear();
-    tauTraceRegistry.n.clear();
+      const axisValues = Array.isArray(paramValuesByName[axisParam]) ? paramValuesByName[axisParam] : [];
+      const cursorIdx = clampIdx(cursorIndicesByParamState[axisParam] ?? 0, axisValues.length - 1);
+      const axisSeries = tauSeriesForParam(axisParam, axisValues, [], cursorIdx);
+      const traces = [
+        {
+          x: axisSeries.xValues,
+          y: axisSeries.yValues,
+          mode: 'lines',
+          line: { color: '#9aa0a6', width: 2 },
+          hovertemplate: `${escapeHtml(axisParam)}=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>`,
+          showlegend: false,
+        },
+      ];
+      const currentTau = axisSeries.yValues[cursorIdx] ?? null;
+      if (currentTau !== null && currentTau !== undefined) {
+        traces.push({
+          x: [axisSeries.xValues[cursorIdx]],
+          y: [currentTau],
+          mode: 'markers',
+          marker: { size: 12 },
+          hovertemplate: `${escapeHtml(axisParam)}=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>`,
+          showlegend: false,
+        });
+      }
 
-    const gammaPattern = tauPatternGammaInput ? tauPatternGammaInput.value : '';
-    const nPattern = tauPatternNInput ? tauPatternNInput.value : '';
-    const gammaOverlay = tauPatternOverlay('gamma', gammaPattern);
-    const nOverlay = tauPatternOverlay('n', nPattern);
-    if (tauPatternGammaError) tauPatternGammaError.textContent = gammaOverlay.error;
-    if (tauPatternNError) tauPatternNError.textContent = nOverlay.error;
-    if (tauPatternGammaInput) tauPatternGammaInput.classList.toggle('is-error', Boolean(gammaOverlay.error));
-    if (tauPatternNInput) tauPatternNInput.classList.toggle('is-error', Boolean(nOverlay.error));
-
-    const currentTauGamma = Array.isArray(tauGrid[globalGammaIdx]) ? tauGrid[globalGammaIdx][localNIdxForGammaPlot] : null;
-    const currentTauN = Array.isArray(tauGrid[localGammaIdxForNPlot]) ? tauGrid[localGammaIdxForNPlot][globalNIdx] : null;
-    const gammaTraces = [
-      {
-        x: gammaValues,
-        y: tauColumn(tauGrid, localNIdxForGammaPlot),
-        mode: 'lines',
-        line: { color: '#9aa0a6', width: 2 },
-        hovertemplate: 'gamma=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>',
-        showlegend: false,
-      },
-    ];
-    if (currentTauGamma !== null && currentTauGamma !== undefined) {
-      gammaTraces.push({
-        x: [gammaValues[globalGammaIdx]],
-        y: [currentTauGamma],
-        mode: 'markers',
-        marker: { size: 12 },
-        hovertemplate: 'gamma=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>',
-        showlegend: false,
+      const runMap = new Map();
+      dualRuns.forEach((run) => {
+        const runSeries = ((run.tau_series_by_param || {})[axisParam] || {});
+        if (!Array.isArray(runSeries.y_values)) return;
+        const traceIndex = traces.length;
+        traces.push({
+          x: Array.isArray(runSeries.x_values) ? runSeries.x_values : axisSeries.xValues,
+          y: runSeries.y_values,
+          mode: 'lines',
+          line: { color: run.color || '#f97316', width: 2 },
+          hovertemplate: `${escapeHtml(axisParam)}=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
+          showlegend: false,
+          visible: runVisibility.get(run.id) !== false ? true : 'legendonly',
+        });
+        runMap.set(run.id, traceIndex);
       });
-    }
+      tauTraceRegistry.set(axisParam, runMap);
 
-    const nTraces = [
-      {
-        x: nValues,
-        y: tauRow(tauGrid, localGammaIdxForNPlot),
-        mode: 'lines',
-        line: { color: '#9aa0a6', width: 2 },
-        hovertemplate: 'n=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>',
-        showlegend: false,
-      },
-    ];
-    if (currentTauN !== null && currentTauN !== undefined) {
-      nTraces.push({
-        x: [nValues[globalNIdx]],
-        y: [currentTauN],
-        mode: 'markers',
-        marker: { size: 12 },
-        hovertemplate: 'n=%{x:.3f}<br>tau=%{y:.3e}<extra></extra>',
-        showlegend: false,
-      });
-    }
+      const patternInput = tauPatternInputsByParam.get(axisParam);
+      const overlay = tauPatternOverlay(axisParam, patternInput ? patternInput.value : '');
+      const errorEl = tauPatternErrorsByParam.get(axisParam);
+      if (errorEl) errorEl.textContent = overlay.error;
+      if (patternInput) patternInput.classList.toggle('is-error', Boolean(overlay.error));
+      if (overlay.yValues && !overlay.error) {
+        traces.push({
+          x: axisSeries.xValues,
+          y: overlay.yValues,
+          mode: 'lines',
+          line: { color: '#ff8a00', width: 2 },
+          hovertemplate: `${escapeHtml(axisParam)}=%{x:.3f}<br>pattern=%{y:.3e}<extra></extra>`,
+          showlegend: false,
+        });
+      }
 
-    dualRuns.forEach((run) => {
-      const grid = run.tau_grid || [];
-      const gammaTraceIdx = gammaTraces.length;
-      gammaTraces.push({
-        x: gammaValues,
-        y: tauColumn(grid, localNIdxForGammaPlot),
-        mode: 'lines',
-        line: { color: run.color || '#f97316', width: 2 },
-        hovertemplate: `gamma=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
-        showlegend: false,
-        visible: runVisibility.get(run.id) !== false ? true : 'legendonly',
-      });
-      tauTraceRegistry.gamma.set(run.id, gammaTraceIdx);
-
-      const nTraceIdx = nTraces.length;
-      nTraces.push({
-        x: nValues,
-        y: tauRow(grid, localGammaIdxForNPlot),
-        mode: 'lines',
-        line: { color: run.color || '#f97316', width: 2 },
-        hovertemplate: `n=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
-        showlegend: false,
-        visible: runVisibility.get(run.id) !== false ? true : 'legendonly',
-      });
-      tauTraceRegistry.n.set(run.id, nTraceIdx);
+      const fixedParts = dualParams
+        .filter((name) => name !== axisParam)
+        .map((name) => {
+          const values = Array.isArray(paramValuesByName[name]) ? paramValuesByName[name] : [];
+          const idx = clampIdx(localCursorIndicesByParamState[name] ?? cursorIndicesByParamState[name] ?? 0, values.length - 1);
+          return `${name}=${values[idx] !== undefined ? values[idx] : ''}`;
+        });
+      const title = fixedParts.length ? `Tau vs ${axisParam} (${fixedParts.join(', ')})` : `Tau vs ${axisParam}`;
+      Plotly.newPlot(
+        plotId,
+        traces,
+        { autosize: true, title: { text: title }, xaxis: { title: axisParam }, yaxis: { title: 'tau' }, margin: { t: 40, l: 45, r: 10, b: 35 } },
+        { displayModeBar: false, responsive: true },
+      );
     });
-
-    // Put hypothesis overlays on top of all tau traces.
-    if (gammaOverlay.yValues && !gammaOverlay.error) {
-      gammaTraces.push({
-        x: gammaValues,
-        y: gammaOverlay.yValues,
-        mode: 'lines',
-        line: { color: '#ff8a00', width: 2 },
-        hovertemplate: 'gamma=%{x:.3f}<br>pattern=%{y:.3e}<extra></extra>',
-        showlegend: false,
-      });
-    }
-    if (nOverlay.yValues && !nOverlay.error) {
-      nTraces.push({
-        x: nValues,
-        y: nOverlay.yValues,
-        mode: 'lines',
-        line: { color: '#ff8a00', width: 2 },
-        hovertemplate: 'n=%{x:.3f}<br>pattern=%{y:.3e}<extra></extra>',
-        showlegend: false,
-      });
-    }
-
-    Plotly.newPlot(
-      'tau-plot-gamma',
-      gammaTraces,
-      { autosize: true, title: { text: `Tau vs gamma (n = ${nValues[localNIdxForGammaPlot] ?? ''})` }, xaxis: { title: 'gamma' }, yaxis: { title: 'tau' }, margin: { t: 40, l: 45, r: 10, b: 35 } },
-      { displayModeBar: false, responsive: true },
-    );
-    Plotly.newPlot(
-      'tau-plot-n',
-      nTraces,
-      { autosize: true, title: { text: `Tau vs n (gamma = ${gammaValues[localGammaIdxForNPlot] ?? ''})` }, xaxis: { title: 'n' }, yaxis: { title: 'tau' }, margin: { t: 40, l: 45, r: 10, b: 35 } },
-      { displayModeBar: false, responsive: true },
-    );
     updateTauLabels();
   }
 
   function emitCursorIfChanged() {
-    const currentKey = `${globalGammaIdx}:${globalNIdx}`;
+    const cursorByParam = currentCursorIndicesByParam();
+    const localCursorByParam = currentLocalCursorIndicesByParam();
+    const patternsByParam = currentPatternsByParam();
+    const currentKey = JSON.stringify({
+      g: globalGammaIdx,
+      n: globalNIdx,
+      local: localCursorByParam,
+      patterns: patternsByParam,
+    });
     if (currentKey === lastCursorEventKey) return;
     lastCursorEventKey = currentKey;
     setTriggerValue('cursor', {
       request_id: Date.now(),
+      cursor_indices_by_param: cursorByParam,
+      local_cursor_indices_by_param: localCursorByParam,
+      patterns_by_param: patternsByParam,
       gamma_idx: globalGammaIdx,
       n_idx: globalNIdx,
       local_n_idx_for_gamma: localNIdxForGammaPlot,
       local_gamma_idx_for_n: localGammaIdxForNPlot,
-      pattern_gamma: tauPatternGammaInput ? tauPatternGammaInput.value : '',
-      pattern_n: tauPatternNInput ? tauPatternNInput.value : '',
+      pattern_gamma: patternsByParam.gamma || '',
+      pattern_n: patternsByParam.n || '',
     });
   }
 
   function clearDualPlots() {
-    const gammaPlot = root.querySelector('#dual-plot-gamma');
-    const nPlot = root.querySelector('#dual-plot-n');
-    if (gammaPlot) gammaPlot.innerHTML = '';
-    if (nPlot) nPlot.innerHTML = '';
-    selectedPlotCards.gamma.clear();
-    selectedPlotCards.n.clear();
+    dualParams.forEach((param) => {
+      const grid = root.querySelector(`#dual-plot-${sanitizeId(param)}`);
+      if (grid) grid.innerHTML = '';
+    });
+    selectedPlotCards.forEach((setRef) => setRef.clear());
     overlayState.clear();
     dualTraceRegistry.clear();
     updateOverlayButtonVisibility(false);
     updateRemoveButtons();
   }
 
-  function togglePlotCardSelection(card, setRef) {
+  function togglePlotCardSelection(card, paramName) {
     const seriesId = card.getAttribute('data-series-id');
     if (!seriesId) return;
-    const select = !setRef.has(seriesId);
+    const targetSet = selectedPlotCards.get(paramName) || selectedPlotCards.values().next().value;
+    if (!targetSet) return;
+    const select = !targetSet.has(seriesId);
     const apply = (targetSet) => {
       if (select) targetSet.add(seriesId);
       else targetSet.delete(seriesId);
     };
-    apply(selectedPlotCards.gamma);
-    apply(selectedPlotCards.n);
+    selectedPlotCards.forEach((setRef) => apply(setRef));
     root.querySelectorAll(`.dual-plot-card[data-series-id="${seriesId}"]`).forEach((el) => {
       el.classList.toggle('is-selected', select);
     });
@@ -842,8 +981,7 @@ export default function(component) {
         plotSelectionMap.delete(seriesId);
       }
     });
-    selectedPlotCards.gamma.clear();
-    selectedPlotCards.n.clear();
+    selectedPlotCards.forEach((setRef) => setRef.clear());
     updateDeactivatedList();
     updateClearButton();
     clearDualPlots();
@@ -851,12 +989,44 @@ export default function(component) {
     updateRemoveButtons();
   }
 
+  function baseSeriesForParam(seriesId, paramName) {
+    const generic = (seriesDataByParam[seriesId] && seriesDataByParam[seriesId].by_param && seriesDataByParam[seriesId].by_param[paramName]) || null;
+    if (generic && Array.isArray(generic.x_values) && Array.isArray(generic.y_values)) {
+      return {
+        x: generic.x_values,
+        y: generic.y_values,
+        allZero: Boolean(generic.all_zero),
+      };
+    }
+    const legacy = seriesData[seriesId];
+    if (!legacy) return null;
+    if (paramName === 'gamma') return { x: legacy.gamma_values, y: legacy.gamma_dual, allZero: Boolean(legacy.all_zero_gamma) };
+    if (paramName === 'n') return { x: legacy.n_values, y: legacy.n_dual, allZero: Boolean(legacy.all_zero_n) };
+    return null;
+  }
+
+  function runSeriesForParam(run, seriesId, paramName) {
+    const generic = (run.series_data_by_param || {})[seriesId];
+    const genericParam = generic && generic.by_param && generic.by_param[paramName];
+    if (genericParam && Array.isArray(genericParam.x_values) && Array.isArray(genericParam.y_values)) {
+      return {
+        x: genericParam.x_values,
+        y: genericParam.y_values,
+      };
+    }
+    const runSeries = (run.series_data || {})[seriesId];
+    if (!runSeries) return null;
+    if (paramName === 'gamma') return { x: runSeries.gamma_values, y: runSeries.gamma_dual };
+    if (paramName === 'n') return { x: runSeries.n_values, y: runSeries.n_dual };
+    return null;
+  }
+
   function applyZeroFilter() {
     root.querySelectorAll('.dual-button').forEach((btn) => {
       const seriesId = btn.getAttribute('data-series-id');
-      const series = seriesData[seriesId];
       const section = btn.getAttribute('data-section');
-      const isAllZero = series && ((section === 'gamma' && series.all_zero_gamma) || (section === 'n' && series.all_zero_n));
+      const payload = baseSeriesForParam(seriesId, section || '');
+      const isAllZero = Boolean(payload && payload.allZero);
       btn.classList.toggle('is-all-zero', Boolean(isAllZero));
       if (hideZero && isAllZero) {
         if (plotSelectionMap.has(seriesId)) {
@@ -873,21 +1043,20 @@ export default function(component) {
   }
 
   function plotSelected() {
-    const gammaGrid = root.querySelector('#dual-plot-gamma');
-    const nGrid = root.querySelector('#dual-plot-n');
-    if (!gammaGrid || !nGrid) return;
+    const plotGridsByParam = new Map(dualParams.map((param) => [param, root.querySelector(`#dual-plot-${sanitizeId(param)}`)]));
     const seriesIds = Array.from(plotSelectionMap.keys());
-    gammaGrid.innerHTML = '';
-    nGrid.innerHTML = '';
-    selectedPlotCards.gamma.clear();
-    selectedPlotCards.n.clear();
+    plotGridsByParam.forEach((grid) => {
+      if (grid) grid.innerHTML = '';
+    });
+    selectedPlotCards.forEach((setRef) => setRef.clear());
     overlayState.clear();
     dualTraceRegistry.clear();
     updateRemoveButtons();
 
     if (!seriesIds.length) {
-      gammaGrid.textContent = 'Select dual values to plot.';
-      nGrid.textContent = 'Select dual values to plot.';
+      plotGridsByParam.forEach((grid) => {
+        if (grid) grid.textContent = 'Select dual values to plot.';
+      });
       updateOverlayButtonVisibility(false);
       return;
     }
@@ -895,7 +1064,9 @@ export default function(component) {
     updateOverlayButtonVisibility(true);
     const grouped = new Map();
     seriesIds.forEach((seriesId) => {
-      const series = seriesData[seriesId];
+      const legacy = seriesData[seriesId];
+      const generic = seriesDataByParam[seriesId];
+      const series = generic || legacy;
       if (!series) return;
       const constraint = series.constraint || 'Other';
       if (!grouped.has(constraint)) grouped.set(constraint, []);
@@ -904,160 +1075,94 @@ export default function(component) {
 
     grouped.forEach((ids, constraint) => {
       const constraintLabel = escapeHtml(constraint);
-      let gammaConstraintGrid = null;
-      let nConstraintGrid = null;
-
-      function ensureGammaSection() {
-        if (gammaConstraintGrid) return gammaConstraintGrid;
-        const gammaSection = document.createElement('div');
-        gammaSection.className = 'dual-plot-constraint';
-        gammaSection.innerHTML = `<div class="dual-plot-constraint-title">${constraintLabel}</div><div class="dual-plot-cards" data-constraint="${constraintLabel}"></div>`;
-        gammaGrid.appendChild(gammaSection);
-        gammaConstraintGrid = gammaSection.querySelector('.dual-plot-cards');
-        return gammaConstraintGrid;
-      }
-
-      function ensureNSection() {
-        if (nConstraintGrid) return nConstraintGrid;
-        const nSection = document.createElement('div');
-        nSection.className = 'dual-plot-constraint';
-        nSection.innerHTML = `<div class="dual-plot-constraint-title">${constraintLabel}</div><div class="dual-plot-cards" data-constraint="${constraintLabel}"></div>`;
-        nGrid.appendChild(nSection);
-        nConstraintGrid = nSection.querySelector('.dual-plot-cards');
-        return nConstraintGrid;
-      }
+      const constraintGridByParam = new Map();
+      dualParams.forEach((param) => {
+        const grid = plotGridsByParam.get(param);
+        if (!grid) return;
+        const section = document.createElement('div');
+        section.className = 'dual-plot-constraint';
+        section.innerHTML = `<div class="dual-plot-constraint-title">${constraintLabel}</div><div class="dual-plot-cards" data-constraint="${constraintLabel}" data-param="${escapeHtml(param)}"></div>`;
+        grid.appendChild(section);
+        constraintGridByParam.set(param, section.querySelector('.dual-plot-cards'));
+      });
 
       ids.forEach((seriesId) => {
-        const series = seriesData[seriesId];
-        if (!series) return;
-        const gammaCount = series.gamma_dual.filter((value) => value !== null && Number.isFinite(value)).length;
-        const nCount = series.n_dual.filter((value) => value !== null && Number.isFinite(value)).length;
-        const hasGammaData = gammaCount > 0;
-        const hasNData = nCount > 0;
-        if (!hasGammaData && !hasNData) return;
+        const legacy = seriesData[seriesId];
+        const generic = seriesDataByParam[seriesId];
+        const label = (generic && generic.label) || (legacy && legacy.label) || seriesId;
+        if (!generic && !legacy) return;
 
         const safeId = sanitizeId(seriesId);
         const safeKey = `${safeId}-${Math.random().toString(36).slice(2, 8)}`;
-        const gammaPlotId = `gamma-${safeKey}`;
-        const nPlotId = `n-${safeKey}`;
+        dualParams.forEach((param) => {
+          const payload = baseSeriesForParam(seriesId, param);
+          if (!payload || !Array.isArray(payload.y)) return;
+          const count = payload.y.filter((value) => value !== null && Number.isFinite(value)).length;
+          if (!count) return;
+          const plotId = `${sanitizeId(param)}-${safeKey}`;
+          const card = document.createElement('div');
+          card.className = 'dual-plot-card';
+          card.setAttribute('data-series-id', seriesId);
+          card.innerHTML = `<div class="dual-plot-card-title">${formatDualLabel(label)}</div><div id="${plotId}" class="dual-plot-chart"></div><input class="dual-overlay-input" type="text" placeholder="${randomOverlayPlaceholder()}" data-series-id="${escapeHtml(seriesId)}" data-axis="${escapeHtml(param)}" data-plot-id="${plotId}">`;
+          const container = constraintGridByParam.get(param);
+          if (!container) return;
+          container.appendChild(card);
+          card.addEventListener('click', () => togglePlotCardSelection(card, param));
 
-        if (hasGammaData) {
-          const gammaCard = document.createElement('div');
-          gammaCard.className = 'dual-plot-card';
-          gammaCard.setAttribute('data-series-id', seriesId);
-          gammaCard.innerHTML = `<div class="dual-plot-card-title">${formatDualLabel(series.label)}</div><div id="${gammaPlotId}" class="dual-plot-chart"></div><input class="dual-overlay-input" type="text" placeholder="${randomOverlayPlaceholder()}" data-series-id="${escapeHtml(seriesId)}" data-axis="gamma" data-plot-id="${gammaPlotId}">`;
-          ensureGammaSection().appendChild(gammaCard);
-          gammaCard.addEventListener('click', () => togglePlotCardSelection(gammaCard, selectedPlotCards.gamma));
-
-          const gammaTraces = [];
-          gammaTraces.push({
-            x: series.gamma_values,
-            y: series.gamma_dual,
-            mode: gammaCount <= 1 ? 'markers' : 'lines',
+          const traces = [];
+          traces.push({
+            x: payload.x,
+            y: payload.y,
+            mode: count <= 1 ? 'markers' : 'lines',
             name: 'Baseline',
             line: { color: '#9aa0a6', width: 2 },
-            hovertemplate: 'gamma=%{x:.3f}<br>Baseline=%{y:.3e}<extra></extra>',
+            hovertemplate: `${escapeHtml(param)}=%{x:.3f}<br>Baseline=%{y:.3e}<extra></extra>`,
             showlegend: false,
           });
-          const gammaRunMap = new Map();
+          const runMap = new Map();
           dualRuns.forEach((run) => {
-            const runSeries = (run.series_data || {})[seriesId];
-            if (!runSeries) return;
-            const runGammaCount = runSeries.gamma_dual.filter((value) => value !== null && Number.isFinite(value)).length;
-            if (!runGammaCount) return;
-            const traceIndex = gammaTraces.length;
-            gammaTraces.push({
-              x: runSeries.gamma_values,
-              y: runSeries.gamma_dual,
-              mode: runGammaCount <= 1 ? 'markers' : 'lines',
+            const runPayload = runSeriesForParam(run, seriesId, param);
+            if (!runPayload || !Array.isArray(runPayload.y)) return;
+            const runCount = runPayload.y.filter((value) => value !== null && Number.isFinite(value)).length;
+            if (!runCount) return;
+            const traceIndex = traces.length;
+            traces.push({
+              x: runPayload.x,
+              y: runPayload.y,
+              mode: runCount <= 1 ? 'markers' : 'lines',
               name: run.name || run.id || 'Run',
               line: { color: run.color || '#f97316', width: 2 },
-              hovertemplate: `gamma=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
+              hovertemplate: `${escapeHtml(param)}=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
               showlegend: false,
               visible: runVisibility.get(run.id) !== false ? true : 'legendonly',
             });
-            gammaRunMap.set(run.id, traceIndex);
+            runMap.set(run.id, traceIndex);
           });
-          dualTraceRegistry.set(gammaPlotId, gammaRunMap);
+          dualTraceRegistry.set(plotId, runMap);
           Plotly.newPlot(
-            gammaPlotId,
-            gammaTraces,
+            plotId,
+            traces,
             { autosize: true, xaxis: { title: '', tickfont: { size: 9 } }, yaxis: { title: '', tickfont: { size: 9 } }, margin: { t: 10, l: 30, r: 10, b: 15 } },
             { displayModeBar: false, responsive: true },
           );
 
-          const gammaOverlayInput = gammaCard.querySelector('.dual-overlay-input');
-          if (gammaOverlayInput) {
-            gammaOverlayInput.addEventListener('focus', () => gammaOverlayInput.setAttribute('placeholder', ''));
-            gammaOverlayInput.addEventListener('click', (event) => event.stopPropagation());
-            gammaOverlayInput.addEventListener('input', (event) => {
-              const key = gammaOverlayInput.getAttribute('data-plot-id');
+          const overlayInput = card.querySelector('.dual-overlay-input');
+          if (overlayInput) {
+            overlayInput.addEventListener('focus', () => overlayInput.setAttribute('placeholder', ''));
+            overlayInput.addEventListener('click', (event) => event.stopPropagation());
+            overlayInput.addEventListener('input', (event) => {
+              const key = overlayInput.getAttribute('data-plot-id');
               if (overlayDebounce.has(key)) clearTimeout(overlayDebounce.get(key));
               overlayDebounce.set(key, setTimeout(() => ensureMath(() => handleOverlayInput(event)), 250));
             });
           }
-        }
-
-        if (hasNData) {
-          const nCard = document.createElement('div');
-          nCard.className = 'dual-plot-card';
-          nCard.setAttribute('data-series-id', seriesId);
-          nCard.innerHTML = `<div class="dual-plot-card-title">${formatDualLabel(series.label)}</div><div id="${nPlotId}" class="dual-plot-chart"></div><input class="dual-overlay-input" type="text" placeholder="${randomOverlayPlaceholder()}" data-series-id="${escapeHtml(seriesId)}" data-axis="n" data-plot-id="${nPlotId}">`;
-          ensureNSection().appendChild(nCard);
-          nCard.addEventListener('click', () => togglePlotCardSelection(nCard, selectedPlotCards.n));
-
-          const nTraces = [];
-          nTraces.push({
-            x: series.n_values,
-            y: series.n_dual,
-            mode: nCount <= 1 ? 'markers' : 'lines',
-            name: 'Baseline',
-            line: { color: '#9aa0a6', width: 2 },
-            hovertemplate: 'n=%{x:.3f}<br>Baseline=%{y:.3e}<extra></extra>',
-            showlegend: false,
-          });
-          const nRunMap = new Map();
-          dualRuns.forEach((run) => {
-            const runSeries = (run.series_data || {})[seriesId];
-            if (!runSeries) return;
-            const runNCount = runSeries.n_dual.filter((value) => value !== null && Number.isFinite(value)).length;
-            if (!runNCount) return;
-            const traceIndex = nTraces.length;
-            nTraces.push({
-              x: runSeries.n_values,
-              y: runSeries.n_dual,
-              mode: runNCount <= 1 ? 'markers' : 'lines',
-              name: run.name || run.id || 'Run',
-              line: { color: run.color || '#f97316', width: 2 },
-              hovertemplate: `n=%{x:.3f}<br>${escapeHtml(run.name || run.id || 'Run')}=%{y:.3e}<extra></extra>`,
-              showlegend: false,
-              visible: runVisibility.get(run.id) !== false ? true : 'legendonly',
-            });
-            nRunMap.set(run.id, traceIndex);
-          });
-          dualTraceRegistry.set(nPlotId, nRunMap);
-          Plotly.newPlot(
-            nPlotId,
-            nTraces,
-            { autosize: true, xaxis: { title: '', tickfont: { size: 9 } }, yaxis: { title: '', tickfont: { size: 9 } }, margin: { t: 10, l: 30, r: 10, b: 15 } },
-            { displayModeBar: false, responsive: true },
-          );
-
-          const nOverlayInput = nCard.querySelector('.dual-overlay-input');
-          if (nOverlayInput) {
-            nOverlayInput.addEventListener('focus', () => nOverlayInput.setAttribute('placeholder', ''));
-            nOverlayInput.addEventListener('click', (event) => event.stopPropagation());
-            nOverlayInput.addEventListener('input', (event) => {
-              const key = nOverlayInput.getAttribute('data-plot-id');
-              if (overlayDebounce.has(key)) clearTimeout(overlayDebounce.get(key));
-              overlayDebounce.set(key, setTimeout(() => ensureMath(() => handleOverlayInput(event)), 250));
-            });
-          }
-        }
+        });
       });
     });
-    if (!gammaGrid.childElementCount) gammaGrid.textContent = 'No gamma-series data for selected dual values.';
-    if (!nGrid.childElementCount) nGrid.textContent = 'No n-series data for selected dual values.';
+    dualParams.forEach((param) => {
+      const grid = plotGridsByParam.get(param);
+      if (grid && !grid.childElementCount) grid.textContent = `No ${param}-series data for selected dual values.`;
+    });
   }
 
   root.addEventListener('click', (event) => {
@@ -1081,8 +1186,9 @@ export default function(component) {
       setTriggerValue('remove_run', {
         request_id: Date.now(),
         run_id: runId,
-        pattern_gamma: tauPatternGammaInput ? tauPatternGammaInput.value : '',
-        pattern_n: tauPatternNInput ? tauPatternNInput.value : '',
+        patterns_by_param: currentPatternsByParam(),
+        pattern_gamma: tauPatternGammaInput ? tauPatternGammaInput.value : initialPatternGamma,
+        pattern_n: tauPatternNInput ? tauPatternNInput.value : initialPatternN,
       });
       return;
     }
@@ -1192,9 +1298,13 @@ export default function(component) {
       return;
     }
 
-    if (button.id === 'dual-remove-gamma' || button.id === 'dual-remove-n') {
+    if (button.classList.contains('dual-remove-button')) {
       event.preventDefault();
-      removeSelectedSeries(new Set([...selectedPlotCards.gamma, ...selectedPlotCards.n]));
+      const selectedIds = new Set();
+      selectedPlotCards.forEach((setRef) => {
+        setRef.forEach((id) => selectedIds.add(id));
+      });
+      removeSelectedSeries(selectedIds);
       return;
     }
 
@@ -1208,56 +1318,72 @@ export default function(component) {
         selected_series_ids: activeSeriesIds,
         deactivated_series_ids: Array.from(deactivatedForRecompute.keys()),
         deactivated_labels: Array.from(deactivatedForRecompute.values()),
+        local_cursor_indices_by_param: currentLocalCursorIndicesByParam(),
+        patterns_by_param: currentPatternsByParam(),
         local_n_idx_for_gamma: localNIdxForGammaPlot,
         local_gamma_idx_for_n: localGammaIdxForNPlot,
-        pattern_gamma: tauPatternGammaInput ? tauPatternGammaInput.value : '',
-        pattern_n: tauPatternNInput ? tauPatternNInput.value : '',
+        pattern_gamma: tauPatternGammaInput ? tauPatternGammaInput.value : initialPatternGamma,
+        pattern_n: tauPatternNInput ? tauPatternNInput.value : initialPatternN,
       });
     }
   });
 
-  if (tauLocalNForGammaSlider) {
-    tauLocalNForGammaSlider.addEventListener('input', () => {
-      localNIdxForGammaPlot = Number(tauLocalNForGammaSlider.value);
+  tauGlobalSlidersByParam.forEach((slider, param) => {
+    if (!slider) return;
+    slider.addEventListener('input', () => {
+      const idx = Number(slider.value);
+      cursorIndicesByParamState[param] = idx;
+      if (param === 'gamma') globalGammaIdx = idx;
+      if (param === 'n') globalNIdx = idx;
       ensurePlotly(renderTauPlots);
     });
-  }
-  if (tauLocalGammaForNSlider) {
-    tauLocalGammaForNSlider.addEventListener('input', () => {
-      localGammaIdxForNPlot = Number(tauLocalGammaForNSlider.value);
-      ensurePlotly(renderTauPlots);
-    });
-  }
-  if (tauGlobalGammaSlider) {
-    tauGlobalGammaSlider.addEventListener('input', () => {
-      globalGammaIdx = Number(tauGlobalGammaSlider.value);
-      ensurePlotly(renderTauPlots);
-    });
-    tauGlobalGammaSlider.addEventListener('change', () => {
-      globalGammaIdx = Number(tauGlobalGammaSlider.value);
+    slider.addEventListener('change', () => {
+      const idx = Number(slider.value);
+      cursorIndicesByParamState[param] = idx;
+      if (param === 'gamma') globalGammaIdx = idx;
+      if (param === 'n') globalNIdx = idx;
       emitCursorIfChanged();
     });
-  }
-  if (tauGlobalNSlider) {
-    tauGlobalNSlider.addEventListener('input', () => {
-      globalNIdx = Number(tauGlobalNSlider.value);
+  });
+  tauLocalSliders.forEach((slider) => {
+    slider.addEventListener('input', () => {
+      const param = slider.getAttribute('data-param');
+      if (!param) return;
+      const idx = Number(slider.value);
+      localCursorIndicesByParamState[param] = idx;
+      tauLocalSliders.forEach((peer) => {
+        if (peer === slider) return;
+        if (peer.getAttribute('data-param') === param) {
+          peer.value = String(idx);
+        }
+      });
+      if (param === 'n') localNIdxForGammaPlot = idx;
+      if (param === 'gamma') localGammaIdxForNPlot = idx;
       ensurePlotly(renderTauPlots);
     });
-    tauGlobalNSlider.addEventListener('change', () => {
-      globalNIdx = Number(tauGlobalNSlider.value);
+    slider.addEventListener('change', () => {
+      const param = slider.getAttribute('data-param');
+      if (!param) return;
+      const idx = Number(slider.value);
+      localCursorIndicesByParamState[param] = idx;
+      tauLocalSliders.forEach((peer) => {
+        if (peer === slider) return;
+        if (peer.getAttribute('data-param') === param) {
+          peer.value = String(idx);
+        }
+      });
+      if (param === 'n') localNIdxForGammaPlot = idx;
+      if (param === 'gamma') localGammaIdxForNPlot = idx;
+      ensurePlotly(renderTauPlots);
       emitCursorIfChanged();
     });
-  }
-  if (tauPatternGammaInput) {
-    tauPatternGammaInput.addEventListener('input', () => {
+  });
+  tauPatternInputsByParam.forEach((inputEl) => {
+    if (!inputEl) return;
+    inputEl.addEventListener('input', () => {
       ensureMath(() => ensurePlotly(renderTauPlots));
     });
-  }
-  if (tauPatternNInput) {
-    tauPatternNInput.addEventListener('input', () => {
-      ensureMath(() => ensurePlotly(renderTauPlots));
-    });
-  }
+  });
   if (metricSelect) {
     metricSelect.addEventListener('change', () => {
       setTriggerValue('metric', {
@@ -1273,17 +1399,19 @@ export default function(component) {
     tabRecomputeBtn.addEventListener('click', () => setActionTab('recompute'));
   }
 
-  if (tauPatternGammaHint) tauPatternGammaHint.textContent = buildPatternHintText('gamma');
-  if (tauPatternNHint) tauPatternNHint.textContent = buildPatternHintText('n');
+  tauPatternHintsByParam.forEach((hintEl, param) => {
+    if (!hintEl) return;
+    hintEl.textContent = buildPatternHintText(param);
+  });
 
   toggleBtn.classList.toggle('is-active', hideZero);
   toggleBtn.textContent = hideZero ? 'Show all-zero duals' : 'Hide all-zero duals';
 
   const selectedSeries = (data && data.selected_series_ids) || [];
   selectedSeries.forEach((seriesId) => {
-    const series = seriesData[seriesId];
+    const series = seriesData[seriesId] || seriesDataByParam[seriesId];
     if (!series) return;
-    plotSelectionMap.set(seriesId, series.label);
+    plotSelectionMap.set(seriesId, series.label || seriesId);
   });
 
   applyZeroFilter();
