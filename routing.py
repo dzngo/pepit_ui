@@ -31,6 +31,7 @@ from utils import (
     build_dual_series_data,
     clear_algorithm_caches,
     compute,
+    discrete_values,
     dual_ranking_by_slice,
 )
 
@@ -194,6 +195,57 @@ def _parse_hyperparameter_specs(rows: list[dict]) -> tuple[list[HyperparameterSp
             "Current compute/plot engine still requires these hyperparameters: " + ", ".join(missing_required) + "."
         )
     return specs, errors
+
+
+def _cursor_indices_key(algo_key: str) -> str:
+    return f"cursor_indices_by_param_{algo_key}"
+
+
+def _local_cursor_indices_key(algo_key: str) -> str:
+    return f"local_cursor_indices_by_param_{algo_key}"
+
+
+def _patterns_by_param_key(algo_key: str) -> str:
+    return f"tau_patterns_by_param_{algo_key}"
+
+
+def _default_index_for_spec(spec: HyperparameterSpec) -> int:
+    total = int(round((spec.max_value - spec.min_value) / spec.step))
+    idx = int(round((spec.default - spec.min_value) / spec.step))
+    return int(min(max(idx, 0), total))
+
+
+def _default_cursor_indices(specs: list[HyperparameterSpec]) -> dict[str, int]:
+    return {hp.name: _default_index_for_spec(hp) for hp in specs}
+
+
+def _clamp_cursor_indices(indices: dict[str, int], specs: list[HyperparameterSpec]) -> dict[str, int]:
+    clamped: dict[str, int] = {}
+    for hp in specs:
+        values = discrete_values(hp)
+        max_idx = max(len(values) - 1, 0)
+        raw_idx = int(indices.get(hp.name, _default_index_for_spec(hp)))
+        clamped[hp.name] = max(0, min(raw_idx, max_idx))
+    return clamped
+
+
+def _param_values_by_name(specs: list[HyperparameterSpec]) -> dict[str, list[float]]:
+    return {hp.name: [float(v) for v in discrete_values(hp)] for hp in specs}
+
+
+def _sync_legacy_gamma_n_state(
+    *,
+    algo_key: str,
+    cursor_indices: dict[str, int],
+    local_cursor_indices: dict[str, int],
+    patterns_by_param: dict[str, str],
+) -> None:
+    st.session_state[f"gamma_idx_{algo_key}"] = int(cursor_indices.get("gamma", 0))
+    st.session_state[f"n_idx_{algo_key}"] = int(cursor_indices.get("n", 0))
+    st.session_state[f"tau_local_n_idx_for_gamma_{algo_key}"] = int(local_cursor_indices.get("n", 0))
+    st.session_state[f"tau_local_gamma_idx_for_n_{algo_key}"] = int(local_cursor_indices.get("gamma", 0))
+    st.session_state[f"tau_pattern_gamma_{algo_key}"] = str(patterns_by_param.get("gamma", ""))
+    st.session_state[f"tau_pattern_n_{algo_key}"] = str(patterns_by_param.get("n", ""))
 
 
 def _steps_source(spec: AlgorithmSpec) -> str:
@@ -548,7 +600,7 @@ def render_loading_phase(algo_key: str, spec):
             for hp in hyperparameter_specs:
                 summary_lines.append(
                     f"**{hp.name}**: [{hp.min_value}, {hp.max_value}], "
-                    "step_size={hp.step}, default={hp.default}, type={hp.value_type}"
+                    f"step_size={hp.step}, default={hp.default}, type={hp.value_type}"
                 )
         else:
             summary_lines.extend(
@@ -594,14 +646,18 @@ def render_loading_phase(algo_key: str, spec):
     st.session_state.pop(_last_metric_event_key(algo_key), None)
     st.session_state.pop(_last_remove_event_key(algo_key), None)
     st.session_state[f"dual_selected_{algo_key}"] = []
-    st.session_state[f"gamma_slider_{algo_key}"] = float(gamma_spec.min_value)
-    st.session_state[f"n_slider_{algo_key}"] = float(n_spec.min_value)
-    st.session_state[f"gamma_idx_{algo_key}"] = 0
-    st.session_state[f"n_idx_{algo_key}"] = 0
-    st.session_state[f"tau_local_n_idx_for_gamma_{algo_key}"] = 0
-    st.session_state[f"tau_local_gamma_idx_for_n_{algo_key}"] = 0
-    st.session_state[f"tau_pattern_gamma_{algo_key}"] = ""
-    st.session_state[f"tau_pattern_n_{algo_key}"] = ""
+    cursor_indices = _default_cursor_indices(hyperparameter_specs)
+    local_cursor_indices = dict(cursor_indices)
+    patterns_by_param = {hp.name: "" for hp in hyperparameter_specs}
+    st.session_state[_cursor_indices_key(algo_key)] = cursor_indices
+    st.session_state[_local_cursor_indices_key(algo_key)] = local_cursor_indices
+    st.session_state[_patterns_by_param_key(algo_key)] = patterns_by_param
+    _sync_legacy_gamma_n_state(
+        algo_key=algo_key,
+        cursor_indices=cursor_indices,
+        local_cursor_indices=local_cursor_indices,
+        patterns_by_param=patterns_by_param,
+    )
     st.rerun()
 
 
@@ -628,8 +684,9 @@ def render_results_phase(algo_key: str, spec):
     gamma_values, n_values, tau_grid, cached_warnings, duals_grid = result
     gamma_spec = settings["gamma_spec"]
     n_spec = settings["n_spec"]
-    pattern_gamma_key = f"tau_pattern_gamma_{algo_key}"
-    pattern_n_key = f"tau_pattern_n_{algo_key}"
+    hyperparameter_specs = list(settings.get("hyperparameter_specs", []))
+    specs_by_name = {hp.name: hp for hp in hyperparameter_specs}
+    param_values_by_name = _param_values_by_name(hyperparameter_specs)
 
     st.subheader(f"Results for `{spec.name}`")
     if st.button("Change hyperparameter settings"):
@@ -643,7 +700,7 @@ def render_results_phase(algo_key: str, spec):
         for hp in settings.get("hyperparameter_specs", []):
             summary_lines.append(
                 f"**{hp.name}**: [{hp.min_value}, {hp.max_value}], "
-                "step_size={hp.step}, default={hp.default}, type={hp.value_type}"
+                f"step_size={hp.step}, default={hp.default}, type={hp.value_type}"
             )
         st.markdown("<br>".join(summary_lines), unsafe_allow_html=True)
         st.markdown("**Steps**")
@@ -656,24 +713,39 @@ def render_results_phase(algo_key: str, spec):
                 st.markdown(f"*params*: {params_line}")
             else:
                 st.markdown("*params*: `{}`")
-    gamma_idx_key = f"gamma_idx_{algo_key}"
-    n_idx_key = f"n_idx_{algo_key}"
-    tau_local_n_idx_key = f"tau_local_n_idx_for_gamma_{algo_key}"
-    tau_local_gamma_idx_key = f"tau_local_gamma_idx_for_n_{algo_key}"
-    gamma_idx = int(st.session_state.get(gamma_idx_key, 0))
-    n_idx = int(st.session_state.get(n_idx_key, 0))
-    tau_local_n_idx_for_gamma = int(st.session_state.get(tau_local_n_idx_key, n_idx))
-    tau_local_gamma_idx_for_n = int(st.session_state.get(tau_local_gamma_idx_key, gamma_idx))
-    gamma_idx = max(0, min(gamma_idx, len(gamma_values) - 1))
-    n_idx = max(0, min(n_idx, len(n_values) - 1))
-    tau_local_n_idx_for_gamma = max(0, min(tau_local_n_idx_for_gamma, len(n_values) - 1))
-    tau_local_gamma_idx_for_n = max(0, min(tau_local_gamma_idx_for_n, len(gamma_values) - 1))
-    st.session_state[gamma_idx_key] = gamma_idx
-    st.session_state[n_idx_key] = n_idx
-    st.session_state[tau_local_n_idx_key] = tau_local_n_idx_for_gamma
-    st.session_state[tau_local_gamma_idx_key] = tau_local_gamma_idx_for_n
-    st.session_state.setdefault(pattern_gamma_key, "")
-    st.session_state.setdefault(pattern_n_key, "")
+    cursor_state_key = _cursor_indices_key(algo_key)
+    local_cursor_state_key = _local_cursor_indices_key(algo_key)
+    pattern_state_key = _patterns_by_param_key(algo_key)
+    default_cursor = _default_cursor_indices(hyperparameter_specs)
+    cursor_indices = _clamp_cursor_indices(
+        dict(st.session_state.get(cursor_state_key, default_cursor)),
+        hyperparameter_specs,
+    )
+    local_cursor_indices = _clamp_cursor_indices(
+        dict(st.session_state.get(local_cursor_state_key, cursor_indices)),
+        hyperparameter_specs,
+    )
+    patterns_by_param = dict(st.session_state.get(pattern_state_key, {}))
+    for hp in hyperparameter_specs:
+        patterns_by_param[hp.name] = str(patterns_by_param.get(hp.name, ""))
+
+    gamma_idx = max(0, min(int(cursor_indices.get("gamma", 0)), len(gamma_values) - 1))
+    n_idx = max(0, min(int(cursor_indices.get("n", 0)), len(n_values) - 1))
+    tau_local_n_idx_for_gamma = max(0, min(int(local_cursor_indices.get("n", n_idx)), len(n_values) - 1))
+    tau_local_gamma_idx_for_n = max(0, min(int(local_cursor_indices.get("gamma", gamma_idx)), len(gamma_values) - 1))
+    cursor_indices["gamma"] = gamma_idx
+    cursor_indices["n"] = n_idx
+    local_cursor_indices["n"] = tau_local_n_idx_for_gamma
+    local_cursor_indices["gamma"] = tau_local_gamma_idx_for_n
+    st.session_state[cursor_state_key] = cursor_indices
+    st.session_state[local_cursor_state_key] = local_cursor_indices
+    st.session_state[pattern_state_key] = patterns_by_param
+    _sync_legacy_gamma_n_state(
+        algo_key=algo_key,
+        cursor_indices=cursor_indices,
+        local_cursor_indices=local_cursor_indices,
+        patterns_by_param=patterns_by_param,
+    )
     base_param_values, invalid_params, conflict_params = _build_pattern_param_values(settings["function_config"])
     warning_messages = set(cached_warnings)
     runs = st.session_state.setdefault(_runs_key(algo_key), [])
@@ -732,12 +804,17 @@ def render_results_phase(algo_key: str, spec):
                 "value_type": str(n_spec.value_type),
             },
             "tau_grid": tau_grid_payload,
+            "param_order": [hp.name for hp in hyperparameter_specs],
+            "param_values_by_name": param_values_by_name,
+            "cursor_indices_by_param": {name: int(idx) for name, idx in cursor_indices.items()},
+            "local_cursor_indices_by_param": {name: int(idx) for name, idx in local_cursor_indices.items()},
+            "patterns_by_param": {name: str(value) for name, value in patterns_by_param.items()},
             "default_gamma_idx": gamma_idx,
             "default_n_idx": n_idx,
             "default_local_n_idx_for_gamma": tau_local_n_idx_for_gamma,
             "default_local_gamma_idx_for_n": tau_local_gamma_idx_for_n,
-            "pattern_gamma": str(st.session_state.get(pattern_gamma_key, "")),
-            "pattern_n": str(st.session_state.get(pattern_n_key, "")),
+            "pattern_gamma": str(patterns_by_param.get("gamma", "")),
+            "pattern_n": str(patterns_by_param.get("n", "")),
             "pattern_params": {name: float(value) for name, value in sorted(base_param_values.items())},
             "pattern_invalid_params": [str(name) for name in invalid_params],
             "pattern_conflict_params": [str(name) for name in conflict_params],
@@ -750,17 +827,48 @@ def render_results_phase(algo_key: str, spec):
         if event_type == "cursor":
             cursor_event_key = _last_cursor_event_key(algo_key)
             if event_id and st.session_state.get(cursor_event_key) != event_id:
-                next_gamma_idx = int(event.get("gamma_idx", gamma_idx))
-                next_n_idx = int(event.get("n_idx", n_idx))
-                next_local_n_idx_for_gamma = int(event.get("local_n_idx_for_gamma", tau_local_n_idx_for_gamma))
-                next_local_gamma_idx_for_n = int(event.get("local_gamma_idx_for_n", tau_local_gamma_idx_for_n))
-                st.session_state[pattern_gamma_key] = str(event.get("pattern_gamma", ""))
-                st.session_state[pattern_n_key] = str(event.get("pattern_n", ""))
-                st.session_state[gamma_idx_key] = max(0, min(next_gamma_idx, len(gamma_values) - 1))
-                st.session_state[n_idx_key] = max(0, min(next_n_idx, len(n_values) - 1))
-                st.session_state[tau_local_n_idx_key] = max(0, min(next_local_n_idx_for_gamma, len(n_values) - 1))
-                st.session_state[tau_local_gamma_idx_key] = max(
-                    0, min(next_local_gamma_idx_for_n, len(gamma_values) - 1)
+                next_cursor_indices = dict(cursor_indices)
+                incoming_cursor = event.get("cursor_indices_by_param")
+                if isinstance(incoming_cursor, dict):
+                    for name in specs_by_name:
+                        if name in incoming_cursor:
+                            next_cursor_indices[name] = int(incoming_cursor[name])
+                else:
+                    next_cursor_indices["gamma"] = int(event.get("gamma_idx", gamma_idx))
+                    next_cursor_indices["n"] = int(event.get("n_idx", n_idx))
+
+                next_local_cursor_indices = dict(local_cursor_indices)
+                incoming_local_cursor = event.get("local_cursor_indices_by_param")
+                if isinstance(incoming_local_cursor, dict):
+                    for name in specs_by_name:
+                        if name in incoming_local_cursor:
+                            next_local_cursor_indices[name] = int(incoming_local_cursor[name])
+                else:
+                    next_local_cursor_indices["n"] = int(event.get("local_n_idx_for_gamma", tau_local_n_idx_for_gamma))
+                    next_local_cursor_indices["gamma"] = int(
+                        event.get("local_gamma_idx_for_n", tau_local_gamma_idx_for_n)
+                    )
+
+                next_patterns_by_param = dict(patterns_by_param)
+                incoming_patterns = event.get("patterns_by_param")
+                if isinstance(incoming_patterns, dict):
+                    for name in specs_by_name:
+                        if name in incoming_patterns:
+                            next_patterns_by_param[name] = str(incoming_patterns[name])
+                else:
+                    next_patterns_by_param["gamma"] = str(event.get("pattern_gamma", ""))
+                    next_patterns_by_param["n"] = str(event.get("pattern_n", ""))
+
+                next_cursor_indices = _clamp_cursor_indices(next_cursor_indices, hyperparameter_specs)
+                next_local_cursor_indices = _clamp_cursor_indices(next_local_cursor_indices, hyperparameter_specs)
+                st.session_state[cursor_state_key] = next_cursor_indices
+                st.session_state[local_cursor_state_key] = next_local_cursor_indices
+                st.session_state[pattern_state_key] = next_patterns_by_param
+                _sync_legacy_gamma_n_state(
+                    algo_key=algo_key,
+                    cursor_indices=next_cursor_indices,
+                    local_cursor_indices=next_local_cursor_indices,
+                    patterns_by_param=next_patterns_by_param,
                 )
                 st.session_state[cursor_event_key] = event_id
                 st.rerun()
@@ -786,8 +894,22 @@ def render_results_phase(algo_key: str, spec):
             remove_event_key = _last_remove_event_key(algo_key)
             if event_id and st.session_state.get(remove_event_key) != event_id:
                 run_id = str(event.get("run_id", ""))
-                st.session_state[pattern_gamma_key] = str(event.get("pattern_gamma", ""))
-                st.session_state[pattern_n_key] = str(event.get("pattern_n", ""))
+                next_patterns_by_param = dict(patterns_by_param)
+                incoming_patterns = event.get("patterns_by_param")
+                if isinstance(incoming_patterns, dict):
+                    for name in specs_by_name:
+                        if name in incoming_patterns:
+                            next_patterns_by_param[name] = str(incoming_patterns[name])
+                else:
+                    next_patterns_by_param["gamma"] = str(event.get("pattern_gamma", ""))
+                    next_patterns_by_param["n"] = str(event.get("pattern_n", ""))
+                st.session_state[pattern_state_key] = next_patterns_by_param
+                _sync_legacy_gamma_n_state(
+                    algo_key=algo_key,
+                    cursor_indices=cursor_indices,
+                    local_cursor_indices=local_cursor_indices,
+                    patterns_by_param=next_patterns_by_param,
+                )
                 if run_id:
                     runs[:] = [run for run in runs if str(run.get("id", "")) != run_id]
                 st.session_state[remove_event_key] = event_id
@@ -797,13 +919,36 @@ def render_results_phase(algo_key: str, spec):
                 active_series_ids = tuple(sorted(set(event.get("selected_series_ids", []))))
                 deactivated_series_ids = list(dict.fromkeys(event.get("deactivated_series_ids", [])))
                 deactivated_labels = list(event.get("deactivated_labels", []))
-                next_local_n_idx_for_gamma = int(event.get("local_n_idx_for_gamma", tau_local_n_idx_for_gamma))
-                next_local_gamma_idx_for_n = int(event.get("local_gamma_idx_for_n", tau_local_gamma_idx_for_n))
-                st.session_state[pattern_gamma_key] = str(event.get("pattern_gamma", ""))
-                st.session_state[pattern_n_key] = str(event.get("pattern_n", ""))
-                st.session_state[tau_local_n_idx_key] = max(0, min(next_local_n_idx_for_gamma, len(n_values) - 1))
-                st.session_state[tau_local_gamma_idx_key] = max(
-                    0, min(next_local_gamma_idx_for_n, len(gamma_values) - 1)
+                next_local_cursor_indices = dict(local_cursor_indices)
+                incoming_local_cursor = event.get("local_cursor_indices_by_param")
+                if isinstance(incoming_local_cursor, dict):
+                    for name in specs_by_name:
+                        if name in incoming_local_cursor:
+                            next_local_cursor_indices[name] = int(incoming_local_cursor[name])
+                else:
+                    next_local_cursor_indices["n"] = int(event.get("local_n_idx_for_gamma", tau_local_n_idx_for_gamma))
+                    next_local_cursor_indices["gamma"] = int(
+                        event.get("local_gamma_idx_for_n", tau_local_gamma_idx_for_n)
+                    )
+
+                next_patterns_by_param = dict(patterns_by_param)
+                incoming_patterns = event.get("patterns_by_param")
+                if isinstance(incoming_patterns, dict):
+                    for name in specs_by_name:
+                        if name in incoming_patterns:
+                            next_patterns_by_param[name] = str(incoming_patterns[name])
+                else:
+                    next_patterns_by_param["gamma"] = str(event.get("pattern_gamma", ""))
+                    next_patterns_by_param["n"] = str(event.get("pattern_n", ""))
+
+                next_local_cursor_indices = _clamp_cursor_indices(next_local_cursor_indices, hyperparameter_specs)
+                st.session_state[local_cursor_state_key] = next_local_cursor_indices
+                st.session_state[pattern_state_key] = next_patterns_by_param
+                _sync_legacy_gamma_n_state(
+                    algo_key=algo_key,
+                    cursor_indices=cursor_indices,
+                    local_cursor_indices=next_local_cursor_indices,
+                    patterns_by_param=next_patterns_by_param,
                 )
                 with st.spinner("Recomputing tau grid with selected dual values..."):
                     recompute_result = compute(
