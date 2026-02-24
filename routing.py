@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import streamlit as st
 import streamlit.components.v2 as components_v2
 from streamlit_ace import st_ace
@@ -14,6 +15,7 @@ from algorithms_registry import (
     AlgorithmSpec,
     HyperparameterSpec,
     _compile_steps,
+    default_gamma_n_hyperparameters,
     get_algorithm_steps_code,
     get_base_algorithm_name,
     register_custom_algorithm,
@@ -21,8 +23,6 @@ from algorithms_registry import (
     run_algorithm,
 )
 from utils import (
-    BASE_GAMMA_SPEC,
-    BASE_N_SPEC,
     _build_pattern_param_values,
     _float_text_default,
     _parse_float_input,
@@ -38,7 +38,7 @@ from utils import (
 def init_session_state():
     st.session_state.setdefault("ui_phase", "config")
     st.session_state.setdefault("selected_algorithm", None)
-    st.session_state.setdefault("range_store", {})
+    st.session_state.setdefault("hyperparameter_store", {})
     st.session_state.setdefault("pending_settings", None)
     st.session_state.setdefault("active_settings", None)
     st.session_state.setdefault("rerun_nan_caches", False)
@@ -53,44 +53,147 @@ def reset_for_algorithm_change(algo_key: str):
     st.session_state["active_settings"] = None
 
 
-def render_range_inputs(label: str, base: HyperparameterSpec, stored: dict) -> dict:
-    defaults = {
-        "min": stored.get("min", base.min_value) if stored else base.min_value,
-        "max": stored.get("max", base.max_value) if stored else base.max_value,
-        "step": stored.get("step", base.step) if stored else base.step,
-    }
-    col1, col2, col3 = st.columns(3)
-    if base.value_type == "int":
-        min_value = col1.number_input(f"{label} min", value=int(defaults["min"]), step=1)
-        max_value = col2.number_input(f"{label} max", value=int(defaults["max"]), step=1)
-        step_value = col3.number_input(
-            f"{label} step",
-            min_value=1,
-            value=max(int(defaults["step"]), 1),
-            step=1,
-        )
-        return {"min": int(min_value), "max": int(max_value), "step": int(step_value)}
+_HYPERPARAM_COLUMNS = ("name", "label", "value_type", "min", "max", "step", "default")
+_HYPERPARAM_RESERVED_NAMES = {"x", "pi", "e"}
+_CURRENT_REQUIRED_RUNTIME_PARAMS = ("gamma", "n")
 
-    min_value = col1.number_input(
-        f"{label} min",
-        value=float(defaults["min"]),
-        step=float(base.step),
-        format="%.4f",
+
+def _hyperparameter_rows_from_specs(specs: list[HyperparameterSpec]) -> list[dict]:
+    return [
+        {
+            "name": hp.name,
+            "label": hp.label,
+            "value_type": hp.value_type,
+            "min": float(hp.min_value),
+            "max": float(hp.max_value),
+            "step": float(hp.step),
+            "default": float(hp.default),
+        }
+        for hp in specs
+    ]
+
+
+def _render_hyperparameter_editor(algo_key: str, spec: AlgorithmSpec) -> tuple[list[HyperparameterSpec], list[str]]:
+    store = st.session_state["hyperparameter_store"]
+    if algo_key not in store:
+        store[algo_key] = _hyperparameter_rows_from_specs(spec.default_hyperparameters)
+
+    top_left, top_right = st.columns([1, 1])
+    with top_left:
+        if st.button("Use gamma/n quick preset", key=f"btn-hp-preset-{algo_key}"):
+            store[algo_key] = _hyperparameter_rows_from_specs(default_gamma_n_hyperparameters())
+            st.rerun()
+    with top_right:
+        if st.button("Reset to algorithm defaults", key=f"btn-hp-reset-{algo_key}"):
+            store[algo_key] = _hyperparameter_rows_from_specs(spec.default_hyperparameters)
+            st.rerun()
+
+    rows = store.get(algo_key, [])
+    df = pd.DataFrame(rows, columns=list(_HYPERPARAM_COLUMNS))
+    edited = st.data_editor(
+        df,
+        key=f"hyperparam-editor-{algo_key}",
+        num_rows="dynamic",
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "name": st.column_config.TextColumn("Name", required=True, help="Unique parameter id used in code."),
+            "label": st.column_config.TextColumn("Label", required=True),
+            "value_type": st.column_config.SelectboxColumn("Type", options=["float", "int"], required=True),
+            "min": st.column_config.NumberColumn("Min", format="%.8g", required=True),
+            "max": st.column_config.NumberColumn("Max", format="%.8g", required=True),
+            "step": st.column_config.NumberColumn("Step", format="%.8g", required=True),
+            "default": st.column_config.NumberColumn("Default", format="%.8g", required=True),
+        },
     )
-    max_value = col2.number_input(
-        f"{label} max",
-        value=float(defaults["max"]),
-        step=float(base.step),
-        format="%.4f",
-    )
-    step_value = col3.number_input(
-        f"{label} step",
-        min_value=1e-6,
-        value=float(defaults["step"]),
-        step=float(base.step),
-        format="%.4f",
-    )
-    return {"min": float(min_value), "max": float(max_value), "step": float(step_value)}
+    edited_rows = edited.to_dict(orient="records")
+    store[algo_key] = [{col: row.get(col) for col in _HYPERPARAM_COLUMNS} for row in edited_rows]
+    return _parse_hyperparameter_specs(store[algo_key])
+
+
+def _parse_hyperparameter_specs(rows: list[dict]) -> tuple[list[HyperparameterSpec], list[str]]:
+    def _is_blank(value: object) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str) and not value.strip():
+            return True
+        try:
+            return bool(pd.isna(value))
+        except Exception:
+            return False
+
+    errors: list[str] = []
+    specs: list[HyperparameterSpec] = []
+    seen_names: set[str] = set()
+
+    for row_idx, row in enumerate(rows, start=1):
+        raw_name = str(row.get("name") or "").strip()
+        raw_label = str(row.get("label") or "").strip()
+        raw_type = str(row.get("value_type") or "float").strip().lower()
+        row_is_empty = all(_is_blank(row.get(col)) for col in ("name", "label", "min", "max", "step", "default"))
+        if row_is_empty:
+            continue
+        if not raw_name:
+            errors.append(f"Hyperparameter row {row_idx}: name is required.")
+            continue
+        if raw_name in seen_names:
+            errors.append(f"Hyperparameter row {row_idx}: duplicate name '{raw_name}'.")
+            continue
+        seen_names.add(raw_name)
+        if raw_name in _HYPERPARAM_RESERVED_NAMES:
+            errors.append(f"Hyperparameter row {row_idx}: '{raw_name}' is reserved.")
+            continue
+        if raw_type not in {"float", "int"}:
+            errors.append(f"Hyperparameter row {row_idx}: type must be 'float' or 'int'.")
+            continue
+
+        numeric: dict[str, float] = {}
+        numeric_ok = True
+        for key in ("min", "max", "step", "default"):
+            try:
+                numeric[key] = float(row.get(key))
+            except (TypeError, ValueError):
+                errors.append(f"Hyperparameter row {row_idx}: invalid numeric value for '{key}'.")
+                numeric_ok = False
+                break
+        if not numeric_ok:
+            continue
+        if numeric["max"] <= numeric["min"]:
+            errors.append(f"Hyperparameter row {row_idx}: max must be greater than min.")
+            continue
+        if numeric["step"] <= 0:
+            errors.append(f"Hyperparameter row {row_idx}: step must be positive.")
+            continue
+        if not (numeric["min"] <= numeric["default"] <= numeric["max"]):
+            errors.append(f"Hyperparameter row {row_idx}: default must be between min and max.")
+            continue
+        if raw_type == "int":
+            int_fields = ("min", "max", "step", "default")
+            if any(abs(numeric[field] - round(numeric[field])) > 1e-9 for field in int_fields):
+                errors.append(f"Hyperparameter row {row_idx}: int type requires integer min/max/step/default.")
+                continue
+
+        label = raw_label or raw_name
+        specs.append(
+            HyperparameterSpec(
+                name=raw_name,
+                label=label,
+                min_value=float(int(numeric["min"])) if raw_type == "int" else float(numeric["min"]),
+                max_value=float(int(numeric["max"])) if raw_type == "int" else float(numeric["max"]),
+                default=float(int(numeric["default"])) if raw_type == "int" else float(numeric["default"]),
+                step=float(int(numeric["step"])) if raw_type == "int" else float(numeric["step"]),
+                value_type=raw_type,
+            )
+        )
+
+    if not specs:
+        errors.append("At least one hyperparameter is required.")
+    missing_required = [name for name in _CURRENT_REQUIRED_RUNTIME_PARAMS if name not in {hp.name for hp in specs}]
+    if missing_required:
+        errors.append(
+            "Current compute/plot engine still requires these hyperparameters: " + ", ".join(missing_required) + "."
+        )
+    return specs, errors
 
 
 def _steps_source(spec: AlgorithmSpec) -> str:
@@ -166,6 +269,8 @@ def _render_steps_editor(
         if test_context and test_clicked:
             if test_context["function_param_errors"]:
                 st.error("; ".join(test_context["function_param_errors"]))
+            elif test_context["runtime_param_errors"]:
+                st.error("; ".join(test_context["runtime_param_errors"]))
             else:
                 try:
                     steps_code = st.session_state.get(code_key, "")
@@ -175,14 +280,23 @@ def _render_steps_editor(
                         algo=steps,
                         function_slots=list(spec.function_slots),
                         default_function_keys=dict(spec.default_function_keys),
+                        default_hyperparameters=list(spec.default_hyperparameters),
                     )
+                    configured_hyperparameters: list[HyperparameterSpec] = list(
+                        test_context.get("hyperparameter_specs", [])
+                    )
+                    algo_params: dict[str, float | int] = {}
+                    for hp in configured_hyperparameters:
+                        value = hp.default
+                        if hp.name == "gamma" and test_context.get("gamma_min") is not None:
+                            value = float(test_context["gamma_min"])
+                        elif hp.name == "n" and test_context.get("n_min") is not None:
+                            value = float(test_context["n_min"])
+                        algo_params[hp.name] = int(round(value)) if hp.value_type == "int" else float(value)
                     run_algorithm(
                         algo_spec=temp_spec,
                         function_config=test_context["function_config"],
-                        algo_params={
-                            "gamma": float(test_context["gamma_min"]),
-                            "n": float(test_context["n_min"]),
-                        },
+                        algo_params=algo_params,
                     )
                 except Exception as exc:
                     st.error(f"Test failed: {exc}")
@@ -206,14 +320,19 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
     sections = st.columns(2)
     with sections[1]:
         with st.container(border=True):
-            st.write("Set gamma/n ranges")
+            st.write("Hyperparameter config")
+            hyperparameter_specs, hyperparameter_errors = _render_hyperparameter_editor(algo_key, spec)
+            for error in hyperparameter_errors:
+                st.error(error)
 
-            range_store = st.session_state["range_store"]
-            algo_ranges = range_store.setdefault(algo_key, {})
-            gamma_settings = render_range_inputs("gamma", BASE_GAMMA_SPEC, algo_ranges.get("gamma", {}))
-            n_settings = render_range_inputs("n", BASE_N_SPEC, algo_ranges.get("n", {}))
-            algo_ranges["gamma"] = gamma_settings
-            algo_ranges["n"] = n_settings
+            specs_by_name = {hp.name: hp for hp in hyperparameter_specs}
+            gamma_spec = specs_by_name.get("gamma")
+            n_spec = specs_by_name.get("n")
+            runtime_param_errors: list[str] = []
+            if gamma_spec is None:
+                runtime_param_errors.append("Missing required hyperparameter: gamma.")
+            if n_spec is None:
+                runtime_param_errors.append("Missing required hyperparameter: n.")
 
         with st.container(border=True):
             st.write("Functions")
@@ -346,8 +465,10 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                 test_context={
                     "function_config": function_config,
                     "function_param_errors": list(function_param_errors),
-                    "gamma_min": gamma_settings["min"],
-                    "n_min": n_settings["min"],
+                    "runtime_param_errors": runtime_param_errors,
+                    "hyperparameter_specs": list(hyperparameter_specs),
+                    "gamma_min": float(gamma_spec.min_value) if gamma_spec else None,
+                    "n_min": float(n_spec.min_value) if n_spec else None,
                 },
             )
 
@@ -380,40 +501,19 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
 
     plot_clicked = st.button("Plot", key="btn-plot-config")
     if plot_clicked:
-        errors = []
-        if gamma_settings["max"] <= gamma_settings["min"]:
-            errors.append("gamma max must be greater than gamma min.")
-        if gamma_settings["step"] <= 0:
-            errors.append("gamma step must be positive.")
-        if n_settings["max"] <= n_settings["min"]:
-            errors.append("n max must be greater than n min.")
-        if n_settings["step"] <= 0:
-            errors.append("n step must be positive.")
+        errors = list(hyperparameter_errors)
+        errors.extend(runtime_param_errors)
         errors.extend(function_param_errors)
         if errors:
             for error in errors:
                 st.error(error)
             return
-        gamma_spec = HyperparameterSpec(
-            name="gamma",
-            label="gamma",
-            min_value=float(gamma_settings["min"]),
-            max_value=float(gamma_settings["max"]),
-            default=float(gamma_settings["min"]),
-            step=float(gamma_settings["step"]),
-            value_type=BASE_GAMMA_SPEC.value_type,
-        )
-        n_spec = HyperparameterSpec(
-            name="n",
-            label="n",
-            min_value=float(n_settings["min"]),
-            max_value=float(n_settings["max"]),
-            default=float(n_settings["min"]),
-            step=float(n_settings["step"]),
-            value_type=BASE_N_SPEC.value_type,
-        )
+        if gamma_spec is None or n_spec is None:
+            st.error("Missing runtime hyperparameters gamma/n.")
+            return
         st.session_state["pending_settings"] = {
             "algo_key": algo_key,
+            "hyperparameter_specs": list(hyperparameter_specs),
             "gamma_spec": gamma_spec,
             "n_spec": n_spec,
             "function_config": {
@@ -437,14 +537,26 @@ def render_loading_phase(algo_key: str, spec):
 
     gamma_spec = pending["gamma_spec"]
     n_spec = pending["n_spec"]
+    hyperparameter_specs = list(pending.get("hyperparameter_specs", []))
     st.subheader(f"Computing tau values for `{spec.name}`")
 
     with st.container(border=True):
         summary_lines = [
             f"**Algorithm**: `{spec.name}`",
-            f"**gamma**: [{gamma_spec.min_value}, {gamma_spec.max_value}], step_size={gamma_spec.step}",
-            f"**n**: [{n_spec.min_value}, {n_spec.max_value}], step_size={n_spec.step}",
         ]
+        if hyperparameter_specs:
+            for hp in hyperparameter_specs:
+                summary_lines.append(
+                    f"**{hp.name}**: [{hp.min_value}, {hp.max_value}], "
+                    "step_size={hp.step}, default={hp.default}, type={hp.value_type}"
+                )
+        else:
+            summary_lines.extend(
+                [
+                    f"**gamma**: [{gamma_spec.min_value}, {gamma_spec.max_value}], step_size={gamma_spec.step}",
+                    f"**n**: [{n_spec.min_value}, {n_spec.max_value}], step_size={n_spec.step}",
+                ]
+            )
         st.markdown("<br>".join(summary_lines), unsafe_allow_html=True)
         st.markdown("**Steps**")
         st.code(_steps_source(spec), language="python")
@@ -462,6 +574,7 @@ def render_loading_phase(algo_key: str, spec):
         gamma_spec,
         n_spec,
         pending["function_config"],
+        hyperparameter_specs=hyperparameter_specs,
         show_progress=True,
         rerun_nan_cache=bool(pending.get("rerun_nan_caches", False)),
     )
@@ -503,6 +616,7 @@ def render_results_phase(algo_key: str, spec):
         settings["gamma_spec"],
         settings["n_spec"],
         settings["function_config"],
+        hyperparameter_specs=list(settings.get("hyperparameter_specs", [])),
         show_progress=False,
         rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
     )
@@ -518,7 +632,7 @@ def render_results_phase(algo_key: str, spec):
     pattern_n_key = f"tau_pattern_n_{algo_key}"
 
     st.subheader(f"Results for `{spec.name}`")
-    if st.button("Change gamma/n settings"):
+    if st.button("Change hyperparameter settings"):
         st.session_state["ui_phase"] = "config"
         st.rerun()
 
@@ -526,6 +640,11 @@ def render_results_phase(algo_key: str, spec):
         summary_lines = [
             f"**Algorithm**: `{spec.name}`",
         ]
+        for hp in settings.get("hyperparameter_specs", []):
+            summary_lines.append(
+                f"**{hp.name}**: [{hp.min_value}, {hp.max_value}], "
+                "step_size={hp.step}, default={hp.default}, type={hp.value_type}"
+            )
         st.markdown("<br>".join(summary_lines), unsafe_allow_html=True)
         st.markdown("**Steps**")
         st.code(_steps_source(spec), language="python")
@@ -568,6 +687,7 @@ def render_results_phase(algo_key: str, spec):
             settings["gamma_spec"],
             settings["n_spec"],
             settings["function_config"],
+            hyperparameter_specs=list(settings.get("hyperparameter_specs", [])),
             show_progress=False,
             rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
             selected_dual_series_ids=selected_series_ids,
@@ -691,6 +811,7 @@ def render_results_phase(algo_key: str, spec):
                         settings["gamma_spec"],
                         settings["n_spec"],
                         settings["function_config"],
+                        hyperparameter_specs=list(settings.get("hyperparameter_specs", [])),
                         show_progress=True,
                         rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
                         selected_dual_series_ids=active_series_ids,

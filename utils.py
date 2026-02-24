@@ -4,6 +4,7 @@ import pickle
 import random
 import time
 from decimal import ROUND_HALF_UP, Decimal
+from itertools import product
 from math import isfinite
 from pathlib import Path
 from typing import Dict, Tuple
@@ -14,7 +15,6 @@ import sympy as sp
 
 from algorithms_registry import (
     ALGORITHMS,
-    DEFAULT_HYPERPARAMETERS,
     AlgorithmEvaluationError,
     HyperparameterSpec,
     run_algorithm,
@@ -95,14 +95,6 @@ def _normalize_params(params: Dict[str, object]) -> Tuple[Tuple[str, object], ..
     return tuple(sorted(normalized, key=lambda item: item[0]))
 
 
-def _quantize_value(value: float, spec: HyperparameterSpec) -> float:
-    idx = value_index(float(value), spec)
-    quantized = spec.min_value + idx * spec.step
-    if spec.value_type == "int":
-        quantized = int(round(quantized))
-    return _round_value(float(quantized))
-
-
 def _load_point_cache() -> Dict[Tuple, Tuple[float, str | None, Dict[str, Dict[str, float]]]]:
     cached = st.session_state.get(POINT_CACHE_KEY)
     if isinstance(cached, dict):
@@ -140,18 +132,34 @@ def _normalize_function_config(function_config: Dict[str, Dict[str, object]]) ->
     return tuple(normalized)
 
 
+def _normalize_hyperparameter_specs(hyperparameter_specs: list[HyperparameterSpec] | None) -> Tuple:
+    specs = hyperparameter_specs or []
+    return tuple(
+        (
+            spec.name,
+            spec.label,
+            _round_value(spec.min_value),
+            _round_value(spec.max_value),
+            _round_value(spec.default),
+            _round_value(spec.step),
+            spec.value_type,
+        )
+        for spec in specs
+    )
+
+
 def _point_cache_key(
     algo_key: str,
     function_config: Dict[str, Dict[str, object]],
-    gamma_value: float,
-    n_value: float,
+    param_assignment: Dict[str, object],
+    hyperparameter_specs: list[HyperparameterSpec] | None = None,
     selected_dual_series_ids: tuple[str, ...] | None = None,
 ) -> Tuple:
     return (
         algo_key,
         _normalize_function_config(function_config),
-        _round_value(gamma_value),
-        _round_value(n_value),
+        _normalize_params(param_assignment),
+        _normalize_hyperparameter_specs(hyperparameter_specs),
         tuple(selected_dual_series_ids or ()),
     )
 
@@ -161,6 +169,7 @@ def make_cache_key(
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,
     function_config: Dict[str, Dict[str, object]],
+    hyperparameter_specs: list[HyperparameterSpec] | None = None,
     selected_dual_series_ids: tuple[str, ...] | None = None,
 ) -> Tuple:
     return (
@@ -177,9 +186,161 @@ def make_cache_key(
             n_spec.step,
             n_spec.value_type,
         ),
+        _normalize_hyperparameter_specs(hyperparameter_specs),
         _normalize_function_config(function_config),
         tuple(selected_dual_series_ids or ()),
     )
+
+
+def _value_for_spec(spec: HyperparameterSpec, value: float) -> object:
+    if spec.value_type == "int":
+        return int(round(value))
+    return float(value)
+
+
+def _slice_index_by_defaults(
+    hyperparameter_specs: list[HyperparameterSpec],
+    *,
+    axis_overrides: Dict[str, int] | None = None,
+) -> tuple[int, ...]:
+    overrides = axis_overrides or {}
+    indices: list[int] = []
+    for spec in hyperparameter_specs:
+        idx = int(overrides.get(spec.name, value_index(float(spec.default), spec)))
+        total = int(round((spec.max_value - spec.min_value) / spec.step))
+        indices.append(int(min(max(idx, 0), total)))
+    return tuple(indices)
+
+
+def _compute_nd(
+    algo_key: str,
+    function_config: Dict[str, Dict[str, object]],
+    hyperparameter_specs: list[HyperparameterSpec],
+    *,
+    show_progress: bool,
+    rerun_nan_cache: bool = False,
+    selected_dual_series_ids: tuple[str, ...] | None = None,
+):
+    nd_cache = st.session_state.setdefault("tau_grid_cache_nd", {})
+    nd_key = (
+        algo_key,
+        _normalize_hyperparameter_specs(hyperparameter_specs),
+        _normalize_function_config(function_config),
+        tuple(selected_dual_series_ids or ()),
+    )
+    if nd_key in nd_cache:
+        cached = nd_cache[nd_key]
+        if isinstance(cached, tuple) and len(cached) == 4:
+            if not rerun_nan_cache:
+                return cached
+            cached_tau_nd = cached[1]
+            if isinstance(cached_tau_nd, np.ndarray) and not np.isnan(cached_tau_nd).any():
+                return cached
+            nd_cache.pop(nd_key, None)
+        else:
+            nd_cache.pop(nd_key, None)
+
+    spec = ALGORITHMS[algo_key]
+    point_cache = _load_point_cache()
+    param_values = {hp.name: discrete_values(hp) for hp in hyperparameter_specs}
+    shape = tuple(len(param_values[hp.name]) for hp in hyperparameter_specs)
+    tau_nd = np.full(shape, np.nan, dtype=float)
+    duals_nd = np.empty(shape, dtype=object)
+    warnings: set[str] = set()
+    missing: list[tuple[tuple[int, ...], Dict[str, object], Tuple]] = []
+
+    for idx_tuple in product(*[range(size) for size in shape]):
+        algo_params = {
+            hp.name: _value_for_spec(hp, float(param_values[hp.name][idx_tuple[pos]]))
+            for pos, hp in enumerate(hyperparameter_specs)
+        }
+        point_key = _point_cache_key(
+            algo_key,
+            function_config,
+            algo_params,
+            hyperparameter_specs,
+            selected_dual_series_ids,
+        )
+        cached_point = point_cache.get(point_key)
+        if cached_point is None or not isinstance(cached_point, tuple):
+            duals_nd[idx_tuple] = {}
+            missing.append((idx_tuple, algo_params, point_key))
+            continue
+
+        if len(cached_point) == 2:
+            cached_tau, cached_warning = cached_point
+            cached_duals = {}
+        else:
+            cached_tau, cached_warning, cached_duals = cached_point
+
+        if rerun_nan_cache:
+            try:
+                if cached_tau is None or not np.isfinite(float(cached_tau)):
+                    duals_nd[idx_tuple] = {}
+                    missing.append((idx_tuple, algo_params, point_key))
+                    continue
+            except (TypeError, ValueError):
+                duals_nd[idx_tuple] = {}
+                missing.append((idx_tuple, algo_params, point_key))
+                continue
+
+        tau_nd[idx_tuple] = np.nan if cached_tau is None else float(cached_tau)
+        duals_nd[idx_tuple] = cached_duals or {}
+        if cached_warning:
+            warnings.add(cached_warning)
+
+    if missing and not show_progress:
+        return None
+
+    if missing:
+        total = max(len(missing), 1)
+        completed = 0
+        progress_bar = st.progress(0.0)
+        status_placeholder = st.empty()
+        start = time.perf_counter()
+        update_every = max(total // 100, 1)
+
+        for idx_tuple, algo_params, point_key in missing:
+            try:
+                raw = run_algorithm(
+                    algo_spec=spec,
+                    function_config=function_config,
+                    algo_params=algo_params,
+                    active_dual_series_ids=set(selected_dual_series_ids or ()),
+                )
+                if isinstance(raw, tuple) and len(raw) == 2:
+                    tau_raw, duals = raw
+                else:
+                    tau_raw, duals = raw, {}
+                tau_value = float(np.asarray(tau_raw).reshape(-1)[0])
+                tau_nd[idx_tuple] = tau_value
+                duals_nd[idx_tuple] = duals or {}
+                point_cache[point_key] = (tau_value, None, duals or {})
+            except AlgorithmEvaluationError as exc:
+                message = f"{spec.name}: {exc}"
+                warnings.add(message)
+                tau_nd[idx_tuple] = np.nan
+                duals_nd[idx_tuple] = {}
+                point_cache[point_key] = (np.nan, message, {})
+            except Exception as exc:
+                message = f"{spec.name}: unexpected error - {exc}"
+                warnings.add(message)
+                tau_nd[idx_tuple] = np.nan
+                duals_nd[idx_tuple] = {}
+            completed += 1
+            if completed % update_every == 0 or completed == total:
+                fraction = completed / total
+                elapsed = time.perf_counter() - start
+                eta = (elapsed / fraction) - elapsed if fraction > 0 else 0.0
+                progress_bar.progress(fraction)
+                status_placeholder.write(f"Computing grid… {completed}/{total} (eta {eta:.1f}s)")
+
+        progress_bar.empty()
+        status_placeholder.empty()
+        _save_point_cache(point_cache)
+
+    nd_cache[nd_key] = (param_values, tau_nd, tuple(sorted(warnings)), duals_nd)
+    return nd_cache[nd_key]
 
 
 def compute(
@@ -187,17 +348,20 @@ def compute(
     gamma_spec: HyperparameterSpec,
     n_spec: HyperparameterSpec,
     function_config: Dict[str, Dict[str, object]],
+    hyperparameter_specs: list[HyperparameterSpec] | None = None,
     *,
     show_progress: bool,
     rerun_nan_cache: bool = False,
     selected_dual_series_ids: tuple[str, ...] | None = None,
 ):
+    effective_hyperparameter_specs = list(hyperparameter_specs or [gamma_spec, n_spec])
     grid_cache = st.session_state.setdefault("tau_grid_cache", {})
     key = make_cache_key(
         algo_key,
         gamma_spec,
         n_spec,
         function_config,
+        effective_hyperparameter_specs,
         selected_dual_series_ids,
     )
     if key in grid_cache:
@@ -211,104 +375,45 @@ def compute(
             grid_cache.pop(key, None)
         else:
             grid_cache.pop(key, None)
-
-    spec = ALGORITHMS[algo_key]
-    point_cache = _load_point_cache()
-    gamma_values = discrete_values(gamma_spec)
-    n_values = discrete_values(n_spec)
-    tau_grid = np.full((len(gamma_values), len(n_values)), np.nan)
-    warnings: set[str] = set()
-    duals_grid = [[{} for _ in range(len(n_values))] for _ in range(len(gamma_values))]
-    missing: list[tuple[int, int, float, float, Tuple]] = []
-
-    for i, gamma_value in enumerate(gamma_values):
-        gamma_key = _quantize_value(float(gamma_value), gamma_spec)
-        for j, n_value in enumerate(n_values):
-            n_key = _quantize_value(float(n_value), n_spec)
-            point_key = _point_cache_key(
-                algo_key,
-                function_config,
-                gamma_key,
-                n_key,
-                selected_dual_series_ids,
-            )
-            cached_point = point_cache.get(point_key)
-            if cached_point is None or not isinstance(cached_point, tuple):
-                missing.append((i, j, float(gamma_value), float(n_value), point_key))
-                continue
-            if len(cached_point) == 2:
-                cached_tau, cached_warning = cached_point
-                cached_duals = {}
-            else:
-                cached_tau, cached_warning, cached_duals = cached_point
-            if rerun_nan_cache:
-                try:
-                    if cached_tau is None or not np.isfinite(float(cached_tau)):
-                        missing.append((i, j, float(gamma_value), float(n_value), point_key))
-                        continue
-                except (TypeError, ValueError):
-                    missing.append((i, j, float(gamma_value), float(n_value), point_key))
-                    continue
-            tau_grid[i, j] = np.nan if cached_tau is None else float(cached_tau)
-            duals_grid[i][j] = cached_duals or {}
-            if cached_warning:
-                warnings.add(cached_warning)
-
-    if missing and not show_progress:
+    nd_result = _compute_nd(
+        algo_key,
+        function_config,
+        effective_hyperparameter_specs,
+        show_progress=show_progress,
+        rerun_nan_cache=rerun_nan_cache,
+        selected_dual_series_ids=selected_dual_series_ids,
+    )
+    if nd_result is None:
         return None
 
-    if missing:
-        total = max(len(missing), 1)
-        completed = 0
-        progress_bar = st.progress(0.0)
-        status_placeholder = st.empty()
-        start = time.perf_counter()
-        update_every = max(total // 100, 1)
+    param_values, tau_nd, warnings_tuple, duals_nd = nd_result
+    specs_by_name = {hp.name: hp for hp in effective_hyperparameter_specs}
+    if "gamma" not in specs_by_name or "n" not in specs_by_name:
+        raise ValueError("Configured hyperparameters must include both 'gamma' and 'n' for current UI.")
 
-        for i, j, gamma_value, n_value, point_key in missing:
-            try:
-                raw = run_algorithm(
-                    algo_spec=spec,
-                    function_config=function_config,
-                    algo_params={
-                        "gamma": float(gamma_value),
-                        "n": float(n_value),
-                    },
-                    active_dual_series_ids=set(selected_dual_series_ids or ()),
-                )
-                if isinstance(raw, tuple) and len(raw) == 2:
-                    tau_raw, duals = raw
-                else:
-                    tau_raw, duals = raw, {}
-                tau_value = float(np.asarray(tau_raw).reshape(-1)[0])
-                duals_grid[i][j] = duals or {}
-                tau_grid[i, j] = tau_value
-                point_cache[point_key] = (tau_value, None, duals or {})
-            except AlgorithmEvaluationError as exc:
-                message = f"{spec.name}: {exc}"
-                warnings.add(message)
-                point_cache[point_key] = (np.nan, message, {})
-            except Exception as exc:
-                message = f"{spec.name}: unexpected error - {exc}"
-                warnings.add(message)
-            completed += 1
-            if completed % update_every == 0 or completed == total:
-                fraction = completed / total
-                elapsed = time.perf_counter() - start
-                eta = (elapsed / fraction) - elapsed if fraction > 0 else 0.0
-                progress_bar.progress(fraction)
-                status_placeholder.write(f"Computing grid… {completed}/{total} (eta {eta:.1f}s)")
+    gamma_values = np.asarray(param_values["gamma"], dtype=float)
+    n_values = np.asarray(param_values["n"], dtype=float)
+    gamma_axis = next(i for i, hp in enumerate(effective_hyperparameter_specs) if hp.name == "gamma")
+    n_axis = next(i for i, hp in enumerate(effective_hyperparameter_specs) if hp.name == "n")
 
-        progress_bar.empty()
-        status_placeholder.empty()
-    if missing:
-        _save_point_cache(point_cache)
+    tau_grid = np.full((len(gamma_values), len(n_values)), np.nan, dtype=float)
+    duals_grid = [[{} for _ in range(len(n_values))] for _ in range(len(gamma_values))]
+
+    base_index = list(_slice_index_by_defaults(effective_hyperparameter_specs))
+    for i in range(len(gamma_values)):
+        for j in range(len(n_values)):
+            base_index[gamma_axis] = i
+            base_index[n_axis] = j
+            idx_tuple = tuple(base_index)
+            tau_grid[i, j] = float(tau_nd[idx_tuple]) if np.isfinite(tau_nd[idx_tuple]) else np.nan
+            dual_value = duals_nd[idx_tuple]
+            duals_grid[i][j] = dual_value if isinstance(dual_value, dict) else {}
 
     grid_cache[key] = (
         gamma_values,
         n_values,
         tau_grid,
-        tuple(sorted(warnings)),
+        tuple(sorted(set(warnings_tuple))),
         duals_grid,
     )
     return grid_cache[key]
@@ -337,14 +442,6 @@ def value_index(value: float, spec: HyperparameterSpec) -> int:
 
 def clamp_value(value: float, spec: HyperparameterSpec) -> float:
     return float(min(max(value, spec.min_value), spec.max_value))
-
-
-def base_spec(name: str) -> HyperparameterSpec:
-    return next(param for param in DEFAULT_HYPERPARAMETERS if param.name == name)
-
-
-BASE_GAMMA_SPEC = base_spec("gamma")
-BASE_N_SPEC = base_spec("n")
 
 
 def _dual_series_id(constraint: str, dual_key: str) -> str:

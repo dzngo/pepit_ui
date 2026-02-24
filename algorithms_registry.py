@@ -59,19 +59,19 @@ class HyperparameterSpec:
 
 
 @dataclass
-class FunctionSpec:
-    key: str
-    cls: Function
-    parameters: List["FunctionParamSpec"] = field(default_factory=list)
-
-
-@dataclass
 class FunctionParamSpec:
     name: str
     param_type: str
     description: str
     default: object | None = None
     required: bool = False
+
+
+@dataclass
+class FunctionSpec:
+    key: str
+    cls: Function
+    parameters: List[FunctionParamSpec] = field(default_factory=list)
 
 
 @dataclass
@@ -85,30 +85,33 @@ class AlgorithmSpec:
     algo: Callable[[PEP, Dict[str, object], Dict[str, float]], dict]
     function_slots: List[FunctionSlot]
     default_function_keys: Dict[str, str]
+    default_hyperparameters: List[HyperparameterSpec] = field(default_factory=list)
 
 
 CUSTOM_ALGORITHMS_PATH = Path(__file__).resolve().parent / "custom_algorithms.json"
 
 
-DEFAULT_HYPERPARAMETERS: List[HyperparameterSpec] = [
-    HyperparameterSpec(
-        name="gamma",
-        label="gamma",
-        min_value=0.0,
-        max_value=5.0,
-        default=2.0,
-        step=0.1,
-    ),
-    HyperparameterSpec(
-        name="n",
-        label="n (iterations)",
-        min_value=1,
-        max_value=10,
-        default=5,
-        step=1,
-        value_type="int",
-    ),
-]
+def default_gamma_n_hyperparameters() -> List[HyperparameterSpec]:
+    return [
+        HyperparameterSpec(
+            name="gamma",
+            label="gamma",
+            min_value=0.0,
+            max_value=5.0,
+            default=2.0,
+            step=0.1,
+            value_type="float",
+        ),
+        HyperparameterSpec(
+            name="n",
+            label="n (iterations)",
+            min_value=1,
+            max_value=10,
+            default=5,
+            step=1,
+            value_type="int",
+        ),
+    ]
 
 
 def get_required_init_args(cls) -> List[str]:
@@ -391,24 +394,28 @@ BASE_ALGORITHMS: Dict[str, AlgorithmSpec] = {
         algo=gradient_descent,
         function_slots=[FunctionSlot(key="f")],
         default_function_keys={"f": "SmoothConvexFunction"},
+        default_hyperparameters=default_gamma_n_hyperparameters(),
     ),
     "subgradient_method": AlgorithmSpec(
         name="subgradient_method",
         algo=subgradient_method,
         function_slots=[FunctionSlot(key="f")],
         default_function_keys={"f": "ConvexLipschitzFunction"},
+        default_hyperparameters=default_gamma_n_hyperparameters(),
     ),
     "proximal_gradient": AlgorithmSpec(
         name="proximal_gradient",
         algo=proximal_gradient,
         function_slots=[FunctionSlot(key="f1"), FunctionSlot(key="f2")],
         default_function_keys={"f1": "SmoothStronglyConvexFunction", "f2": "ConvexFunction"},
+        default_hyperparameters=default_gamma_n_hyperparameters(),
     ),
     "accelerated_proximal_point": AlgorithmSpec(
         name="accelerated_proximal_point",
         algo=accelerated_proximal_point,
         function_slots=[FunctionSlot(key="f")],
         default_function_keys={"f": "SmoothStronglyConvexFunction"},
+        default_hyperparameters=default_gamma_n_hyperparameters(),
     ),
 }
 
@@ -460,6 +467,18 @@ def _custom_spec_from_payload(name: str, payload: dict) -> AlgorithmSpec | None:
         algo=steps,
         function_slots=list(base_spec.function_slots),
         default_function_keys=dict(base_spec.default_function_keys),
+        default_hyperparameters=[
+            HyperparameterSpec(
+                name=hp.name,
+                label=hp.label,
+                min_value=hp.min_value,
+                max_value=hp.max_value,
+                default=hp.default,
+                step=hp.step,
+                value_type=hp.value_type,
+            )
+            for hp in base_spec.default_hyperparameters
+        ],
     )
 
 
@@ -517,6 +536,18 @@ def register_custom_algorithm(
         algo=steps,
         function_slots=list(base_spec.function_slots),
         default_function_keys=dict(base_spec.default_function_keys),
+        default_hyperparameters=[
+            HyperparameterSpec(
+                name=hp.name,
+                label=hp.label,
+                min_value=hp.min_value,
+                max_value=hp.max_value,
+                default=hp.default,
+                step=hp.step,
+                value_type=hp.value_type,
+            )
+            for hp in base_spec.default_hyperparameters
+        ],
     )
     CUSTOM_ALGORITHMS[name] = {
         "steps_code": steps_code,
