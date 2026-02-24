@@ -717,13 +717,13 @@ def render_results_phase(algo_key: str, spec):
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
 DUAL_PANEL_CSS = (UI_DIR / "dual_panel.css").read_text()
-DUAL_PANEL_V2_JS = (UI_DIR / "dual_panel.js").read_text()
+DUAL_PANEL_JS = (UI_DIR / "dual_panel.js").read_text()
 
 
 DUAL_PANEL_COMPONENT = components_v2.component(
     "dual_panel_component_v2",
     html="<div id='dual-panel-v2-root'></div>",
-    js=DUAL_PANEL_V2_JS,
+    js=DUAL_PANEL_JS,
 )
 
 
