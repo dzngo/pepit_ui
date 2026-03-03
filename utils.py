@@ -366,20 +366,24 @@ def build_tau_series_by_param(
     hyperparameter_specs: list[HyperparameterSpec],
     param_values: dict[str, np.ndarray],
     tau_nd: np.ndarray,
-    cursor_indices: dict[str, int],
+    local_cursor_indices_by_axis: dict[str, dict[str, int]],
 ) -> dict[str, dict[str, object]]:
     if not hyperparameter_specs:
         return {}
     axis_index = {hp.name: idx for idx, hp in enumerate(hyperparameter_specs)}
-    base_indices: list[int] = []
-    for hp in hyperparameter_specs:
-        values = np.asarray(param_values[hp.name])
-        max_idx = max(len(values) - 1, 0)
-        idx = int(cursor_indices.get(hp.name, value_index(float(hp.default), hp)))
-        base_indices.append(max(0, min(idx, max_idx)))
-
     series_by_param: dict[str, dict[str, object]] = {}
     for hp in hyperparameter_specs:
+        base_indices: list[int] = []
+        axis_locals = local_cursor_indices_by_axis.get(hp.name, {})
+        for base_hp in hyperparameter_specs:
+            values = np.asarray(param_values[base_hp.name])
+            max_idx = max(len(values) - 1, 0)
+            default_idx = value_index(float(base_hp.default), base_hp)
+            if base_hp.name == hp.name:
+                idx = default_idx
+            else:
+                idx = int(axis_locals.get(base_hp.name, default_idx))
+            base_indices.append(max(0, min(idx, max_idx)))
         axis = axis_index[hp.name]
         values = np.asarray(param_values[hp.name], dtype=float)
         y_values: list[float | None] = []

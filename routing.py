@@ -209,6 +209,10 @@ def _local_cursor_indices_key(algo_key: str) -> str:
     return f"local_cursor_indices_by_param_{algo_key}"
 
 
+def _local_cursor_indices_by_axis_key(algo_key: str) -> str:
+    return f"local_cursor_indices_by_axis_{algo_key}"
+
+
 def _patterns_by_param_key(algo_key: str) -> str:
     return f"tau_patterns_by_param_{algo_key}"
 
@@ -235,6 +239,58 @@ def _clamp_cursor_indices(indices: dict[str, int], specs: list[HyperparameterSpe
 
 def _param_values_by_name(specs: list[HyperparameterSpec]) -> dict[str, list[float]]:
     return {hp.name: [float(v) for v in discrete_values(hp)] for hp in specs}
+
+
+def _default_local_cursor_indices_by_axis(
+    specs: list[HyperparameterSpec],
+    cursor_indices: dict[str, int],
+) -> dict[str, dict[str, int]]:
+    names = [hp.name for hp in specs]
+    return {
+        axis: {
+            name: int(cursor_indices.get(name, _default_index_for_spec(next_hp)))
+            for name, next_hp in ((hp.name, hp) for hp in specs)
+            if name != axis
+        }
+        for axis in names
+    }
+
+
+def _clamp_local_cursor_indices_by_axis(
+    local_by_axis: dict[str, dict[str, int]],
+    specs: list[HyperparameterSpec],
+    cursor_indices: dict[str, int],
+) -> dict[str, dict[str, int]]:
+    names = [hp.name for hp in specs]
+    clamped_cursor = _clamp_cursor_indices(cursor_indices, specs)
+    clamped: dict[str, dict[str, int]] = {}
+    for axis in names:
+        incoming_axis = local_by_axis.get(axis, {})
+        axis_map: dict[str, int] = {}
+        for hp in specs:
+            if hp.name == axis:
+                continue
+            values = discrete_values(hp)
+            max_idx = max(len(values) - 1, 0)
+            fallback = int(clamped_cursor.get(hp.name, _default_index_for_spec(hp)))
+            raw_idx = int(incoming_axis.get(hp.name, fallback))
+            axis_map[hp.name] = max(0, min(raw_idx, max_idx))
+        clamped[axis] = axis_map
+    return clamped
+
+
+def _legacy_local_from_axis(
+    local_by_axis: dict[str, dict[str, int]],
+    cursor_indices: dict[str, int],
+) -> dict[str, int]:
+    legacy = dict(cursor_indices)
+    gamma_axis = local_by_axis.get("gamma", {})
+    n_axis = local_by_axis.get("n", {})
+    if "n" in gamma_axis:
+        legacy["n"] = int(gamma_axis["n"])
+    if "gamma" in n_axis:
+        legacy["gamma"] = int(n_axis["gamma"])
+    return legacy
 
 
 def _sync_legacy_gamma_n_state(
@@ -652,14 +708,16 @@ def render_loading_phase(algo_key: str, spec):
     st.session_state[f"dual_selected_{algo_key}"] = []
     cursor_indices = _default_cursor_indices(hyperparameter_specs)
     local_cursor_indices = dict(cursor_indices)
+    local_cursor_indices_by_axis = _default_local_cursor_indices_by_axis(hyperparameter_specs, cursor_indices)
     patterns_by_param = {hp.name: "" for hp in hyperparameter_specs}
     st.session_state[_cursor_indices_key(algo_key)] = cursor_indices
     st.session_state[_local_cursor_indices_key(algo_key)] = local_cursor_indices
+    st.session_state[_local_cursor_indices_by_axis_key(algo_key)] = local_cursor_indices_by_axis
     st.session_state[_patterns_by_param_key(algo_key)] = patterns_by_param
     _sync_legacy_gamma_n_state(
         algo_key=algo_key,
         cursor_indices=cursor_indices,
-        local_cursor_indices=local_cursor_indices,
+        local_cursor_indices=_legacy_local_from_axis(local_cursor_indices_by_axis, cursor_indices),
         patterns_by_param=patterns_by_param,
     )
     st.rerun()
@@ -721,6 +779,7 @@ def render_results_phase(algo_key: str, spec):
                 st.markdown("*params*: `{}`")
     cursor_state_key = _cursor_indices_key(algo_key)
     local_cursor_state_key = _local_cursor_indices_key(algo_key)
+    local_axis_state_key = _local_cursor_indices_by_axis_key(algo_key)
     pattern_state_key = _patterns_by_param_key(algo_key)
     default_cursor = _default_cursor_indices(hyperparameter_specs)
     cursor_indices = _clamp_cursor_indices(
@@ -731,25 +790,39 @@ def render_results_phase(algo_key: str, spec):
         dict(st.session_state.get(local_cursor_state_key, cursor_indices)),
         hyperparameter_specs,
     )
+    local_cursor_indices_by_axis = _clamp_local_cursor_indices_by_axis(
+        dict(st.session_state.get(local_axis_state_key, {})),
+        hyperparameter_specs,
+        local_cursor_indices,
+    )
     patterns_by_param = dict(st.session_state.get(pattern_state_key, {}))
     for hp in hyperparameter_specs:
         patterns_by_param[hp.name] = str(patterns_by_param.get(hp.name, ""))
 
     gamma_idx = max(0, min(int(cursor_indices.get("gamma", 0)), len(gamma_values) - 1))
     n_idx = max(0, min(int(cursor_indices.get("n", 0)), len(n_values) - 1))
-    tau_local_n_idx_for_gamma = max(0, min(int(local_cursor_indices.get("n", n_idx)), len(n_values) - 1))
-    tau_local_gamma_idx_for_n = max(0, min(int(local_cursor_indices.get("gamma", gamma_idx)), len(gamma_values) - 1))
+    tau_local_n_idx_for_gamma = max(
+        0,
+        min(int(local_cursor_indices_by_axis.get("gamma", {}).get("n", n_idx)), len(n_values) - 1),
+    )
+    tau_local_gamma_idx_for_n = max(
+        0,
+        min(int(local_cursor_indices_by_axis.get("n", {}).get("gamma", gamma_idx)), len(gamma_values) - 1),
+    )
     cursor_indices["gamma"] = gamma_idx
     cursor_indices["n"] = n_idx
     local_cursor_indices["n"] = tau_local_n_idx_for_gamma
     local_cursor_indices["gamma"] = tau_local_gamma_idx_for_n
+    local_cursor_indices_by_axis.setdefault("gamma", {})["n"] = tau_local_n_idx_for_gamma
+    local_cursor_indices_by_axis.setdefault("n", {})["gamma"] = tau_local_gamma_idx_for_n
     st.session_state[cursor_state_key] = cursor_indices
     st.session_state[local_cursor_state_key] = local_cursor_indices
+    st.session_state[local_axis_state_key] = local_cursor_indices_by_axis
     st.session_state[pattern_state_key] = patterns_by_param
     _sync_legacy_gamma_n_state(
         algo_key=algo_key,
         cursor_indices=cursor_indices,
-        local_cursor_indices=local_cursor_indices,
+        local_cursor_indices=_legacy_local_from_axis(local_cursor_indices_by_axis, cursor_indices),
         patterns_by_param=patterns_by_param,
     )
     base_param_values, invalid_params, conflict_params = _build_pattern_param_values(settings["function_config"])
@@ -787,7 +860,7 @@ def render_results_phase(algo_key: str, spec):
                 hyperparameter_specs,
                 run_param_values,
                 run_tau_nd,
-                local_cursor_indices,
+                local_cursor_indices_by_axis,
             )
             run_series_data_by_param[run["id"]] = build_dual_series_by_param(
                 run_duals_nd,
@@ -826,7 +899,7 @@ def render_results_phase(algo_key: str, spec):
             hyperparameter_specs,
             param_values_nd,
             tau_nd,
-            local_cursor_indices,
+            local_cursor_indices_by_axis,
         )
         series_data_by_param = build_dual_series_by_param(
             duals_nd,
@@ -902,6 +975,10 @@ def render_results_phase(algo_key: str, spec):
             "param_values_by_name": param_values_by_name,
             "cursor_indices_by_param": {name: int(idx) for name, idx in cursor_indices.items()},
             "local_cursor_indices_by_param": {name: int(idx) for name, idx in local_cursor_indices.items()},
+            "local_cursor_indices_by_axis": {
+                axis: {name: int(idx) for name, idx in axis_map.items()}
+                for axis, axis_map in local_cursor_indices_by_axis.items()
+            },
             "patterns_by_param": {name: str(value) for name, value in patterns_by_param.items()},
             "sections_html_by_param": sections_html_by_param,
             "plot_titles_by_param": plot_titles_by_param,
@@ -935,12 +1012,33 @@ def render_results_phase(algo_key: str, spec):
                     next_cursor_indices["n"] = int(event.get("n_idx", n_idx))
 
                 next_local_cursor_indices = dict(local_cursor_indices)
+                next_local_cursor_indices_by_axis = dict(local_cursor_indices_by_axis)
+                incoming_local_cursor_by_axis = event.get("local_cursor_indices_by_axis")
+                has_axis_payload = isinstance(incoming_local_cursor_by_axis, dict)
+                if has_axis_payload:
+                    for axis_name in specs_by_name:
+                        axis_payload = incoming_local_cursor_by_axis.get(axis_name)
+                        if not isinstance(axis_payload, dict):
+                            continue
+                        next_axis = dict(next_local_cursor_indices_by_axis.get(axis_name, {}))
+                        for name in specs_by_name:
+                            if name == axis_name:
+                                continue
+                            if name in axis_payload:
+                                next_axis[name] = int(axis_payload[name])
+                        next_local_cursor_indices_by_axis[axis_name] = next_axis
                 incoming_local_cursor = event.get("local_cursor_indices_by_param")
-                if isinstance(incoming_local_cursor, dict):
+                if (not has_axis_payload) and isinstance(incoming_local_cursor, dict):
                     for name in specs_by_name:
                         if name in incoming_local_cursor:
                             next_local_cursor_indices[name] = int(incoming_local_cursor[name])
-                else:
+                            for axis_name in specs_by_name:
+                                if axis_name == name:
+                                    continue
+                                next_axis = dict(next_local_cursor_indices_by_axis.get(axis_name, {}))
+                                next_axis[name] = int(incoming_local_cursor[name])
+                                next_local_cursor_indices_by_axis[axis_name] = next_axis
+                elif not has_axis_payload:
                     next_local_cursor_indices["n"] = int(event.get("local_n_idx_for_gamma", tau_local_n_idx_for_gamma))
                     next_local_cursor_indices["gamma"] = int(
                         event.get("local_gamma_idx_for_n", tau_local_gamma_idx_for_n)
@@ -958,13 +1056,21 @@ def render_results_phase(algo_key: str, spec):
 
                 next_cursor_indices = _clamp_cursor_indices(next_cursor_indices, hyperparameter_specs)
                 next_local_cursor_indices = _clamp_cursor_indices(next_local_cursor_indices, hyperparameter_specs)
+                next_local_cursor_indices_by_axis = _clamp_local_cursor_indices_by_axis(
+                    next_local_cursor_indices_by_axis,
+                    hyperparameter_specs,
+                    next_local_cursor_indices,
+                )
                 st.session_state[cursor_state_key] = next_cursor_indices
                 st.session_state[local_cursor_state_key] = next_local_cursor_indices
+                st.session_state[local_axis_state_key] = next_local_cursor_indices_by_axis
                 st.session_state[pattern_state_key] = next_patterns_by_param
                 _sync_legacy_gamma_n_state(
                     algo_key=algo_key,
                     cursor_indices=next_cursor_indices,
-                    local_cursor_indices=next_local_cursor_indices,
+                    local_cursor_indices=_legacy_local_from_axis(
+                        next_local_cursor_indices_by_axis, next_cursor_indices
+                    ),
                     patterns_by_param=next_patterns_by_param,
                 )
                 st.session_state[cursor_event_key] = event_id
@@ -1004,7 +1110,7 @@ def render_results_phase(algo_key: str, spec):
                 _sync_legacy_gamma_n_state(
                     algo_key=algo_key,
                     cursor_indices=cursor_indices,
-                    local_cursor_indices=local_cursor_indices,
+                    local_cursor_indices=_legacy_local_from_axis(local_cursor_indices_by_axis, cursor_indices),
                     patterns_by_param=next_patterns_by_param,
                 )
                 if run_id:
@@ -1017,12 +1123,33 @@ def render_results_phase(algo_key: str, spec):
                 deactivated_series_ids = list(dict.fromkeys(event.get("deactivated_series_ids", [])))
                 deactivated_labels = list(event.get("deactivated_labels", []))
                 next_local_cursor_indices = dict(local_cursor_indices)
+                next_local_cursor_indices_by_axis = dict(local_cursor_indices_by_axis)
+                incoming_local_cursor_by_axis = event.get("local_cursor_indices_by_axis")
+                has_axis_payload = isinstance(incoming_local_cursor_by_axis, dict)
+                if has_axis_payload:
+                    for axis_name in specs_by_name:
+                        axis_payload = incoming_local_cursor_by_axis.get(axis_name)
+                        if not isinstance(axis_payload, dict):
+                            continue
+                        next_axis = dict(next_local_cursor_indices_by_axis.get(axis_name, {}))
+                        for name in specs_by_name:
+                            if name == axis_name:
+                                continue
+                            if name in axis_payload:
+                                next_axis[name] = int(axis_payload[name])
+                        next_local_cursor_indices_by_axis[axis_name] = next_axis
                 incoming_local_cursor = event.get("local_cursor_indices_by_param")
-                if isinstance(incoming_local_cursor, dict):
+                if (not has_axis_payload) and isinstance(incoming_local_cursor, dict):
                     for name in specs_by_name:
                         if name in incoming_local_cursor:
                             next_local_cursor_indices[name] = int(incoming_local_cursor[name])
-                else:
+                            for axis_name in specs_by_name:
+                                if axis_name == name:
+                                    continue
+                                next_axis = dict(next_local_cursor_indices_by_axis.get(axis_name, {}))
+                                next_axis[name] = int(incoming_local_cursor[name])
+                                next_local_cursor_indices_by_axis[axis_name] = next_axis
+                elif not has_axis_payload:
                     next_local_cursor_indices["n"] = int(event.get("local_n_idx_for_gamma", tau_local_n_idx_for_gamma))
                     next_local_cursor_indices["gamma"] = int(
                         event.get("local_gamma_idx_for_n", tau_local_gamma_idx_for_n)
@@ -1039,12 +1166,18 @@ def render_results_phase(algo_key: str, spec):
                     next_patterns_by_param["n"] = str(event.get("pattern_n", ""))
 
                 next_local_cursor_indices = _clamp_cursor_indices(next_local_cursor_indices, hyperparameter_specs)
+                next_local_cursor_indices_by_axis = _clamp_local_cursor_indices_by_axis(
+                    next_local_cursor_indices_by_axis,
+                    hyperparameter_specs,
+                    next_local_cursor_indices,
+                )
                 st.session_state[local_cursor_state_key] = next_local_cursor_indices
+                st.session_state[local_axis_state_key] = next_local_cursor_indices_by_axis
                 st.session_state[pattern_state_key] = next_patterns_by_param
                 _sync_legacy_gamma_n_state(
                     algo_key=algo_key,
                     cursor_indices=cursor_indices,
-                    local_cursor_indices=next_local_cursor_indices,
+                    local_cursor_indices=_legacy_local_from_axis(next_local_cursor_indices_by_axis, cursor_indices),
                     patterns_by_param=next_patterns_by_param,
                 )
                 with st.spinner("Recomputing tau grid with selected dual values..."):
@@ -1215,6 +1348,7 @@ def render_dual_values_panel(
             "css": DUAL_PANEL_CSS,
             "tau_payload": tau_payload,
             "series_data": series_data,
+            "series_data_by_param": tau_payload.get("series_data_by_param", {}),
             "dual_runs": dual_runs_data,
             "gamma_html": gamma_html,
             "n_html": n_html,
