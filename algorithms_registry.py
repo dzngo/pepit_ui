@@ -12,7 +12,7 @@ import numpy as np
 import PEPit.functions as functions
 from PEPit import PEP, Point
 from PEPit.function import Function
-from PEPit.primitive_steps import proximal_step
+from PEPit.primitive_steps import epsilon_subgradient_step, proximal_step
 
 
 class AlgorithmEvaluationError(RuntimeError):
@@ -325,6 +325,34 @@ def accelerated_proximal_point(problem: PEP, funcs: Dict[str, Function], params:
     problem.set_performance_metric(func(x) - fs)
 
 
+def epsilon_subgradient(problem: PEP, funcs: Dict[str, Function], params: Dict[str, float]) -> dict:
+    func = funcs["f"]
+    M = float(params["M"])
+    eps = float(params["eps"])
+    R = float(params["R"])
+    steps = int(params["n"])
+    gamma = float(params["gamma"])
+
+    xs = func.stationary_point()
+    xs.set_name("x_*")
+    fs = func(xs)
+    x0 = problem.set_initial_point()
+    problem.set_initial_condition((x0 - xs) ** 2 <= R**2)
+    x = x0
+    x.set_name("x_0")
+
+    for i in range(steps):
+        x, gx, fx, epsilon = epsilon_subgradient_step(x, func, gamma)
+        x.set_name(f"x_{i+1}")
+        problem.set_performance_metric(fx - fs)
+        problem.add_constraint(epsilon <= eps)
+        problem.add_constraint(gx**2 <= M**2)
+
+    gx, fx = func.oracle(x)
+    problem.add_constraint(gx**2 <= M**2)
+    problem.set_performance_metric(fx - fs)
+
+
 def run_algorithm(
     *,
     algo_spec: AlgorithmSpec,
@@ -416,6 +444,59 @@ BASE_ALGORITHMS: Dict[str, AlgorithmSpec] = {
         function_slots=[FunctionSlot(key="f")],
         default_function_keys={"f": "SmoothStronglyConvexFunction"},
         default_hyperparameters=default_gamma_n_hyperparameters(),
+    ),
+    "epsilon_subgradient": AlgorithmSpec(
+        name="epsilon_subgradient",
+        algo=epsilon_subgradient,
+        function_slots=[FunctionSlot(key="f")],
+        default_function_keys={"f": "ConvexFunction"},
+        default_hyperparameters=[
+            HyperparameterSpec(
+                name="gamma",
+                label="gamma",
+                min_value=0.0,
+                max_value=1.0,
+                default=0.4,
+                step=0.1,
+                value_type="float",
+            ),
+            HyperparameterSpec(
+                name="n",
+                label="n (iterations)",
+                min_value=5,
+                max_value=7,
+                default=6,
+                step=1,
+                value_type="int",
+            ),
+            HyperparameterSpec(
+                name="M",
+                label="M",
+                min_value=1.5,
+                max_value=2.5,
+                default=2,
+                step=0.5,
+                value_type="float",
+            ),
+            HyperparameterSpec(
+                name="eps",
+                label="epsilon",
+                min_value=0.0,
+                max_value=0.5,
+                default=0.1,
+                step=0.1,
+                value_type="float",
+            ),
+            HyperparameterSpec(
+                name="R",
+                label="R",
+                min_value=0.5,
+                max_value=1.5,
+                default=1,
+                step=0.5,
+                value_type="float",
+            ),
+        ],
     ),
 }
 
