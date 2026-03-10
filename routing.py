@@ -82,22 +82,33 @@ def _render_hyperparameter_editor(algo_key: str, spec: AlgorithmSpec) -> tuple[l
     store = st.session_state["hyperparameter_store"]
     if algo_key not in store:
         store[algo_key] = _hyperparameter_rows_from_specs(spec.default_hyperparameters)
+    # Keep editor widget identity separate from persisted config to avoid
+    # st.data_editor "every second edit reverts" behavior.
+    editor_version_key = f"hyperparam-editor-version-{algo_key}"
+    editor_version = int(st.session_state.get(editor_version_key, 0))
+
+    def _bump_editor_version() -> None:
+        # Rotating the widget key forces a fresh editor instance after preset/reset.
+        st.session_state[editor_version_key] = int(st.session_state.get(editor_version_key, 0)) + 1
 
     top_left, top_right = st.columns([1, 1])
     with top_left:
         if st.button("Use gamma/n quick preset", key=f"btn-hp-preset-{algo_key}"):
             store[algo_key] = _hyperparameter_rows_from_specs(default_gamma_n_hyperparameters())
+            _bump_editor_version()
             st.rerun()
     with top_right:
         if st.button("Reset to algorithm defaults", key=f"btn-hp-reset-{algo_key}"):
             store[algo_key] = _hyperparameter_rows_from_specs(spec.default_hyperparameters)
+            _bump_editor_version()
             st.rerun()
 
     rows = store.get(algo_key, [])
     df = pd.DataFrame(rows, columns=list(_HYPERPARAM_COLUMNS))
+    editor_widget_key = f"hyperparam-editor-{algo_key}-v{editor_version}"
     edited = st.data_editor(
         df,
-        key=f"hyperparam-editor-{algo_key}",
+        key=editor_widget_key,
         num_rows="dynamic",
         hide_index=True,
         width="stretch",
@@ -111,9 +122,14 @@ def _render_hyperparameter_editor(algo_key: str, spec: AlgorithmSpec) -> tuple[l
             "default": st.column_config.NumberColumn("Default", format="%.8g", required=True),
         },
     )
-    edited_rows = edited.to_dict(orient="records")
-    store[algo_key] = [{col: row.get(col) for col in _HYPERPARAM_COLUMNS} for row in edited_rows]
-    return _parse_hyperparameter_specs(store[algo_key])
+    edited_rows = [{col: row.get(col) for col in _HYPERPARAM_COLUMNS} for row in edited.to_dict(orient="records")]
+
+    # Persist explicitly on user action; do not overwrite canonical state every rerun.
+    if st.button("Save hyperparameter changes", key=f"btn-hp-save-{algo_key}"):
+        store[algo_key] = edited_rows
+        st.success("Hyperparameter changes saved.")
+
+    return _parse_hyperparameter_specs(edited_rows)
 
 
 def _parse_hyperparameter_specs(rows: list[dict]) -> tuple[list[HyperparameterSpec], list[str]]:
