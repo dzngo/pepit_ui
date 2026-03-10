@@ -336,6 +336,57 @@ def _editor_steps_source(spec: AlgorithmSpec) -> str:
     return code
 
 
+def _run_steps_smoke_test(
+    *,
+    spec: AlgorithmSpec,
+    context: str,
+    algo_key: str,
+    test_context: dict,
+) -> str | None:
+    if test_context["function_param_errors"]:
+        return "; ".join(test_context["function_param_errors"])
+    if test_context["runtime_param_errors"]:
+        return "; ".join(test_context["runtime_param_errors"])
+    try:
+        open_key = f"customize-open-{context}-{algo_key}"
+        code_key = f"customize-code-{context}-{algo_key}"
+        is_custom_editor_open = bool(st.session_state.get(open_key, False))
+        if is_custom_editor_open:
+            default_steps = _editor_steps_source(spec)
+            steps_code = st.session_state.get(code_key, default_steps)
+            steps = _compile_steps(steps_code)
+        else:
+            # For non-customized flow, use the registered algorithm callable directly.
+            steps = spec.algo
+        temp_spec = AlgorithmSpec(
+            name=spec.name,
+            algo=steps,
+            function_slots=list(spec.function_slots),
+            default_function_keys=dict(spec.default_function_keys),
+            default_hyperparameters=list(spec.default_hyperparameters),
+        )
+        configured_hyperparameters: list[HyperparameterSpec] = list(test_context.get("hyperparameter_specs", []))
+        algo_params: dict[str, float | int] = {}
+        for hp in configured_hyperparameters:
+            value = hp.default
+            if hp.name == "gamma" and test_context.get("gamma_min") is not None:
+                value = float(test_context["gamma_min"])
+            elif hp.name == "n" and test_context.get("n_min") is not None:
+                value = float(test_context["n_min"])
+            algo_params[hp.name] = int(round(value)) if hp.value_type == "int" else float(value)
+        run_algorithm(
+            algo_spec=temp_spec,
+            function_config=test_context["function_config"],
+            algo_params=algo_params,
+        )
+    except KeyError as exc:
+        missing_key = exc.args[0] if exc.args else "<unknown>"
+        return f"key not found: {missing_key!r}"
+    except Exception as exc:
+        return str(exc)
+    return None
+
+
 def _render_steps_editor(
     *,
     algo_key: str,
@@ -395,41 +446,16 @@ def _render_steps_editor(
             st.session_state[open_key] = False
             st.rerun()
         if test_context and test_clicked:
-            if test_context["function_param_errors"]:
-                st.error("; ".join(test_context["function_param_errors"]))
-            elif test_context["runtime_param_errors"]:
-                st.error("; ".join(test_context["runtime_param_errors"]))
+            error_message = _run_steps_smoke_test(
+                spec=spec,
+                context=context,
+                algo_key=algo_key,
+                test_context=test_context,
+            )
+            if error_message:
+                st.error(f"Test failed: {error_message}")
             else:
-                try:
-                    steps_code = st.session_state.get(code_key, "")
-                    steps = _compile_steps(steps_code)
-                    temp_spec = AlgorithmSpec(
-                        name=spec.name,
-                        algo=steps,
-                        function_slots=list(spec.function_slots),
-                        default_function_keys=dict(spec.default_function_keys),
-                        default_hyperparameters=list(spec.default_hyperparameters),
-                    )
-                    configured_hyperparameters: list[HyperparameterSpec] = list(
-                        test_context.get("hyperparameter_specs", [])
-                    )
-                    algo_params: dict[str, float | int] = {}
-                    for hp in configured_hyperparameters:
-                        value = hp.default
-                        if hp.name == "gamma" and test_context.get("gamma_min") is not None:
-                            value = float(test_context["gamma_min"])
-                        elif hp.name == "n" and test_context.get("n_min") is not None:
-                            value = float(test_context["n_min"])
-                        algo_params[hp.name] = int(round(value)) if hp.value_type == "int" else float(value)
-                    run_algorithm(
-                        algo_spec=temp_spec,
-                        function_config=test_context["function_config"],
-                        algo_params=algo_params,
-                    )
-                except Exception as exc:
-                    st.error(f"Test failed: {exc}")
-                else:
-                    st.success("Test succeeded.")
+                st.success("Test succeeded.")
     else:
         st.code(_steps_source(spec), language="python")
         if st.button("Customize", key="btn-customize-config"):
@@ -638,6 +664,29 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             return
         if gamma_spec is None or n_spec is None:
             st.error("Missing runtime hyperparameters gamma/n.")
+            return
+        plot_test_context = {
+            "function_config": {
+                slot.key: {
+                    "function_key": st.session_state["function_store"][algo_key][slot.key],
+                    "function_params": dict(st.session_state["function_params_store"][algo_key][slot.key]),
+                }
+                for slot in spec.function_slots
+            },
+            "function_param_errors": list(function_param_errors),
+            "runtime_param_errors": runtime_param_errors,
+            "hyperparameter_specs": list(hyperparameter_specs),
+            "gamma_min": float(gamma_spec.min_value) if gamma_spec else None,
+            "n_min": float(n_spec.min_value) if n_spec else None,
+        }
+        test_error = _run_steps_smoke_test(
+            spec=spec,
+            context="config",
+            algo_key=algo_key,
+            test_context=plot_test_context,
+        )
+        if test_error:
+            st.error(f"Algorithm test failed: {test_error}")
             return
         st.session_state["pending_settings"] = {
             "algo_key": algo_key,
