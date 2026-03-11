@@ -437,6 +437,17 @@ def _render_steps_editor(
                 st.error(str(exc))
             else:
                 st.success(f"Saved custom algorithm '{name}'.")
+                hyperparameter_store = st.session_state.get("hyperparameter_store", {})
+                if isinstance(hyperparameter_store, dict):
+                    copied_rows: list[dict] = []
+                    if test_context:
+                        configured_specs = list(test_context.get("hyperparameter_specs", []))
+                        if configured_specs:
+                            copied_rows = _hyperparameter_rows_from_specs(configured_specs)
+                    if not copied_rows:
+                        current_rows = hyperparameter_store.get(algo_key, [])
+                        copied_rows = [dict(row) for row in current_rows]
+                    hyperparameter_store[name] = copied_rows
                 st.session_state[open_key] = False
                 st.session_state["pending_algorithm_select"] = name
                 st.session_state["selected_algorithm"] = None

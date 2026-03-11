@@ -506,6 +506,7 @@ def _compile_steps(steps_code: str) -> Callable[[PEP, Dict[str, object], Dict[st
         "PEP": PEP,
         "Point": Point,
         "proximal_step": proximal_step,
+        "epsilon_subgradient_step": epsilon_subgradient_step,
         "sqrt": sqrt,
         "np": np,
         "Dict": Dict,
