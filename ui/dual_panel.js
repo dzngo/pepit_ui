@@ -1,7 +1,6 @@
 export default function(component) {
   const { data, parentElement, setTriggerValue } = component;
 
-  const seriesData = (data && data.series_data) || {};
   const seriesDataByParam = (data && data.series_data_by_param) || ((data && data.tau_payload && data.tau_payload.series_data_by_param) || {});
   const rawDualRuns = (data && data.dual_runs) || [];
   const tauPayload = (data && data.tau_payload) || {};
@@ -21,24 +20,18 @@ export default function(component) {
   let hideZero = true;
   let actionTab = 'plot';
 
-  const gammaValues = Array.isArray(tauPayload.gamma_values) ? tauPayload.gamma_values : [];
-  const nValues = Array.isArray(tauPayload.n_values) ? tauPayload.n_values : [];
-  const tauGrid = Array.isArray(tauPayload.tau_grid) ? tauPayload.tau_grid : [];
   const tauSeriesByParam = (tauPayload && tauPayload.tau_series_by_param) || {};
   const paramOrder = Array.isArray(tauPayload.param_order) ? tauPayload.param_order : [];
-  const dualParams = (paramOrder.length ? paramOrder : ['gamma', 'n']).filter((name, idx, arr) => arr.indexOf(name) === idx);
+  const fallbackParams = Object.keys((tauPayload && tauPayload.param_values_by_name) || {});
+  const dualParams = (paramOrder.length ? paramOrder : fallbackParams).filter((name, idx, arr) => arr.indexOf(name) === idx);
   dualParams.forEach((name) => selectedPlotCards.set(name, new Set()));
   const paramValuesByName = (tauPayload && tauPayload.param_values_by_name) || {};
   const cursorIndicesByParamPayload = (tauPayload && tauPayload.cursor_indices_by_param) || {};
-  const localCursorIndicesByParamPayload = (tauPayload && tauPayload.local_cursor_indices_by_param) || {};
   const localCursorIndicesByAxisPayload = (tauPayload && tauPayload.local_cursor_indices_by_axis) || {};
   const patternsByParamPayload = (tauPayload && tauPayload.patterns_by_param) || {};
   const patternParams = (tauPayload && tauPayload.pattern_params) || {};
   const patternInvalidParams = Array.isArray(tauPayload.pattern_invalid_params) ? tauPayload.pattern_invalid_params : [];
   const patternConflictParams = Array.isArray(tauPayload.pattern_conflict_params) ? tauPayload.pattern_conflict_params : [];
-  const initialPatternGamma = String(patternsByParamPayload.gamma ?? tauPayload.pattern_gamma ?? '');
-  const initialPatternN = String(patternsByParamPayload.n ?? tauPayload.pattern_n ?? '');
-
   const RUN_COLORS = ['#0ea5e9', '#14b8a6', '#e11d48', '#f4ec0b', '#22c55e', '#ef4444', '#3b82f6', '#84cc16', '#a855f7'];
 
   function stableHash(text) {
@@ -217,9 +210,7 @@ export default function(component) {
   function dualSectionsHtml() {
     if (!dualParams.length) return '';
     return dualParams.map((param) => {
-      let sectionHtml = sectionsHtmlByParam[param] || '';
-      if (!sectionHtml && param === 'gamma') sectionHtml = data.gamma_html || '';
-      if (!sectionHtml && param === 'n') sectionHtml = data.n_html || '';
+      const sectionHtml = sectionsHtmlByParam[param] || '';
       return `<div class="dual-panel"><div class="dual-section" data-param-section="${escapeHtml(param)}">${sectionHtml}</div></div>`;
     }).join('');
   }
@@ -229,7 +220,7 @@ export default function(component) {
     return dualParams.map((param) => {
       const safeParam = sanitizeId(param);
       const defaultTitle = `Dual value vs ${param}`;
-      const title = plotTitlesByParam[param] || (param === 'gamma' ? data.plot_title_gamma : (param === 'n' ? data.plot_title_n : defaultTitle));
+      const title = plotTitlesByParam[param] || defaultTitle;
       return (
         `<div class="dual-panel">` +
           `<div class="dual-plot-section">` +
@@ -250,30 +241,11 @@ export default function(component) {
 
   function currentCursorIndicesByParam() {
     const indices = {};
-    if (paramOrder.length) {
-      paramOrder.forEach((name) => {
-        const values = Array.isArray(paramValuesByName[name]) ? paramValuesByName[name] : [];
-        const fallback = name === 'gamma' ? globalGammaIdx : (name === 'n' ? globalNIdx : 0);
-        indices[name] = clampIdx(cursorIndicesByParamState[name] ?? fallback, values.length - 1);
-      });
-      indices.gamma = clampIdx(globalGammaIdx, gammaValues.length - 1);
-      indices.n = clampIdx(globalNIdx, nValues.length - 1);
-      return indices;
-    }
-    return {
-      gamma: clampIdx(globalGammaIdx, gammaValues.length - 1),
-      n: clampIdx(globalNIdx, nValues.length - 1),
-    };
-  }
-
-  function currentLocalCursorIndicesByParam() {
-    const cursor = currentCursorIndicesByParam();
-    const out = { ...cursor };
-    const gammaMap = currentLocalCursorIndicesByAxis().gamma || {};
-    const nMap = currentLocalCursorIndicesByAxis().n || {};
-    if (gammaMap.n !== undefined) out.n = gammaMap.n;
-    if (nMap.gamma !== undefined) out.gamma = nMap.gamma;
-    return out;
+    dualParams.forEach((name) => {
+      const values = Array.isArray(paramValuesByName[name]) ? paramValuesByName[name] : [];
+      indices[name] = clampIdx(cursorIndicesByParamState[name] ?? 0, values.length - 1);
+    });
+    return indices;
   }
 
   function currentLocalCursorIndicesByAxis() {
@@ -302,14 +274,9 @@ export default function(component) {
 
   function currentPatternsByParam() {
     const patterns = { ...patternsByParamPayload };
-    if (tauPatternInputsByParam && tauPatternInputsByParam.size) {
-      tauPatternInputsByParam.forEach((inputEl, param) => {
-        patterns[param] = inputEl ? String(inputEl.value || '') : String(patterns[param] || '');
-      });
-    } else {
-      patterns.gamma = tauPatternGammaInput ? tauPatternGammaInput.value : initialPatternGamma;
-      patterns.n = tauPatternNInput ? tauPatternNInput.value : initialPatternN;
-    }
+    tauPatternInputsByParam.forEach((inputEl, param) => {
+      patterns[param] = inputEl ? String(inputEl.value || '') : String(patterns[param] || '');
+    });
     return patterns;
   }
 
@@ -321,7 +288,7 @@ export default function(component) {
       const values = Array.isArray(paramValuesByName[name]) ? paramValuesByName[name] : [];
       const maxIdx = Math.max(values.length - 1, 0);
       const axisPayload = localCursorIndicesByAxisPayload[axisParam] || {};
-      const defaultIdx = clampIdx(axisPayload[name] ?? localCursorIndicesByParamPayload[name] ?? cursorIndicesByParamPayload[name] ?? 0, maxIdx);
+      const defaultIdx = clampIdx(axisPayload[name] ?? cursorIndicesByParamPayload[name] ?? 0, maxIdx);
       return (
         `<div style="display:flex;align-items:center;gap:8px;">` +
           `<strong>Local ${escapeHtml(name)}</strong>` +
@@ -338,9 +305,7 @@ export default function(component) {
       const safeAxis = sanitizeId(axisParam);
       const axisValues = Array.isArray(paramValuesByName[axisParam]) ? paramValuesByName[axisParam] : [];
       const globalIdx = clampIdx(cursorIndicesByParamPayload[axisParam] ?? 0, axisValues.length - 1);
-      const patternValue = String(
-        patternsByParamPayload[axisParam] ?? (axisParam === 'gamma' ? initialPatternGamma : (axisParam === 'n' ? initialPatternN : '')),
-      );
+      const patternValue = String(patternsByParamPayload[axisParam] ?? '');
       return (
         `<div class="dual-panel">` +
           `<div class="dual-plot-section">` +
@@ -455,39 +420,9 @@ export default function(component) {
     tauPatternHintsByParam.set(param, root.querySelector(`.tau-pattern-hint[data-param="${param}"]`));
     tauPatternErrorsByParam.set(param, root.querySelector(`.tau-pattern-error[data-param="${param}"]`));
   });
-  const tauLocalNForGammaSlider = tauLocalSliders.find((el) => el.getAttribute('data-axis-param') === 'gamma' && el.getAttribute('data-param') === 'n') || null;
-  const tauLocalGammaForNSlider = tauLocalSliders.find((el) => el.getAttribute('data-axis-param') === 'n' && el.getAttribute('data-param') === 'gamma') || null;
-  const tauGlobalGammaSlider = tauGlobalSlidersByParam.get('gamma') || null;
-  const tauGlobalNSlider = tauGlobalSlidersByParam.get('n') || null;
-  const tauLocalNForGammaValue = tauLocalValues.find((el) => el.getAttribute('data-axis-param') === 'gamma' && el.getAttribute('data-param') === 'n') || null;
-  const tauLocalGammaForNValue = tauLocalValues.find((el) => el.getAttribute('data-axis-param') === 'n' && el.getAttribute('data-param') === 'gamma') || null;
-  const tauGlobalGammaValue = tauGlobalValuesByParam.get('gamma') || null;
-  const tauGlobalNValue = tauGlobalValuesByParam.get('n') || null;
-  const tauPatternGammaInput = tauPatternInputsByParam.get('gamma') || null;
-  const tauPatternNInput = tauPatternInputsByParam.get('n') || null;
-  const tauPatternGammaHint = tauPatternHintsByParam.get('gamma') || null;
-  const tauPatternNHint = tauPatternHintsByParam.get('n') || null;
-  const tauPatternGammaError = tauPatternErrorsByParam.get('gamma') || null;
-  const tauPatternNError = tauPatternErrorsByParam.get('n') || null;
   const metricSelect = root.querySelector('#dual-ranking-metric');
 
-  let globalGammaIdx = clampIdx(
-    cursorIndicesByParamPayload.gamma ?? (tauGlobalGammaSlider ? Number(tauGlobalGammaSlider.value) : 0),
-    gammaValues.length - 1,
-  );
-  let globalNIdx = clampIdx(
-    cursorIndicesByParamPayload.n ?? (tauGlobalNSlider ? Number(tauGlobalNSlider.value) : 0),
-    nValues.length - 1,
-  );
-  let localNIdxForGammaPlot = clampIdx(
-    ((localCursorIndicesByAxisPayload.gamma || {}).n) ?? localCursorIndicesByParamPayload.n ?? (tauLocalNForGammaSlider ? Number(tauLocalNForGammaSlider.value) : globalNIdx),
-    nValues.length - 1,
-  );
-  let localGammaIdxForNPlot = clampIdx(
-    ((localCursorIndicesByAxisPayload.n || {}).gamma) ?? localCursorIndicesByParamPayload.gamma ?? (tauLocalGammaForNSlider ? Number(tauLocalGammaForNSlider.value) : globalGammaIdx),
-    gammaValues.length - 1,
-  );
-  let cursorIndicesByParamState = { ...cursorIndicesByParamPayload, gamma: globalGammaIdx, n: globalNIdx };
+  let cursorIndicesByParamState = { ...cursorIndicesByParamPayload };
   let localCursorIndicesByAxisState = {};
   dualParams.forEach((name) => {
     const values = Array.isArray(paramValuesByName[name]) ? paramValuesByName[name] : [];
@@ -499,16 +434,11 @@ export default function(component) {
     dualParams.forEach((name) => {
       if (name === axis) return;
       const values = Array.isArray(paramValuesByName[name]) ? paramValuesByName[name] : [];
-      const fallbackLegacy = localCursorIndicesByParamPayload[name];
       const fallback = cursorIndicesByParamState[name] ?? 0;
-      axisState[name] = clampIdx(axisPayload[name] ?? fallbackLegacy ?? fallback, values.length - 1);
+      axisState[name] = clampIdx(axisPayload[name] ?? fallback, values.length - 1);
     });
     localCursorIndicesByAxisState[axis] = axisState;
   });
-  if (tauGlobalGammaSlider) tauGlobalGammaSlider.value = String(globalGammaIdx);
-  if (tauGlobalNSlider) tauGlobalNSlider.value = String(globalNIdx);
-  if (tauLocalNForGammaSlider) tauLocalNForGammaSlider.value = String(localNIdxForGammaPlot);
-  if (tauLocalGammaForNSlider) tauLocalGammaForNSlider.value = String(localGammaIdxForNPlot);
   tauGlobalSlidersByParam.forEach((slider, param) => {
     if (!slider) return;
     const values = Array.isArray(paramValuesByName[param]) ? paramValuesByName[param] : [];
@@ -524,8 +454,7 @@ export default function(component) {
     slider.value = String(idx);
   });
   let lastCursorEventKey = JSON.stringify({
-    g: globalGammaIdx,
-    n: globalNIdx,
+    cursor_by_param: currentCursorIndicesByParam(),
     local_by_axis: currentLocalCursorIndicesByAxis(),
     patterns: currentPatternsByParam(),
   });
@@ -681,9 +610,8 @@ export default function(component) {
     const axis = input.getAttribute('data-axis');
     const plotId = input.getAttribute('data-plot-id');
     const seriesId = input.getAttribute('data-series-id');
-    const legacy = seriesData[seriesId];
     const generic = seriesDataByParam[seriesId];
-    if ((!legacy && !generic) || !axis || !plotId) return;
+    if (!generic || !axis || !plotId) return;
     const rawExpr = normalizeExpression(input.value);
     if (!rawExpr) {
       input.classList.remove('is-error');
@@ -693,8 +621,6 @@ export default function(component) {
     let xValues = [];
     if (generic && generic.by_param && generic.by_param[axis]) {
       xValues = generic.by_param[axis].x_values || [];
-    } else if (legacy) {
-      xValues = axis === 'gamma' ? legacy.gamma_values : (axis === 'n' ? legacy.n_values : []);
     }
     const result = buildOverlayYValues(rawExpr, xValues, (x) => {
       const scope = { x };
@@ -702,13 +628,11 @@ export default function(component) {
         const numeric = Number(value);
         if (Number.isFinite(numeric)) scope[name] = numeric;
       });
-      scope.gamma = Number(gammaValues[globalGammaIdx]);
-      scope.n = Number(nValues[globalNIdx]);
-      if (axis === 'gamma') {
-        scope.gamma = Number(x);
-      } else if (axis === 'n') {
-        scope.n = Number(x);
-      }
+      dualParams.forEach((param) => {
+        const values = Array.isArray(paramValuesByName[param]) ? paramValuesByName[param] : [];
+        const idx = clampIdx(cursorIndicesByParamState[param] ?? 0, values.length - 1);
+        scope[param] = values[idx] !== undefined ? Number(values[idx]) : null;
+      });
       scope[axis] = Number(x);
       return scope;
     });
@@ -848,8 +772,6 @@ export default function(component) {
       });
       scope.x = x;
       scope[axis] = x;
-      if (!Number.isFinite(Number(scope.gamma))) scope.gamma = Number(gammaValues[globalGammaIdx] ?? 0);
-      if (!Number.isFinite(Number(scope.n))) scope.n = Number(nValues[globalNIdx] ?? 0);
       try {
         const value = compiled.evaluate(scope);
         const numeric = typeof value === 'number' ? value : Number(value);
@@ -967,12 +889,6 @@ export default function(component) {
       cursor_indices_by_param: cursorByParam,
       local_cursor_indices_by_axis: localCursorByAxis,
       patterns_by_param: patternsByParam,
-      gamma_idx: globalGammaIdx,
-      n_idx: globalNIdx,
-      local_n_idx_for_gamma: localNIdxForGammaPlot,
-      local_gamma_idx_for_n: localGammaIdxForNPlot,
-      pattern_gamma: patternsByParam.gamma || '',
-      pattern_n: patternsByParam.n || '',
     });
   }
 
@@ -1028,10 +944,6 @@ export default function(component) {
         allZero: Boolean(generic.all_zero),
       };
     }
-    const legacy = seriesData[seriesId];
-    if (!legacy) return null;
-    if (paramName === 'gamma') return { x: legacy.gamma_values, y: legacy.gamma_dual, allZero: Boolean(legacy.all_zero_gamma) };
-    if (paramName === 'n') return { x: legacy.n_values, y: legacy.n_dual, allZero: Boolean(legacy.all_zero_n) };
     return null;
   }
 
@@ -1044,10 +956,6 @@ export default function(component) {
         y: genericParam.y_values,
       };
     }
-    const runSeries = (run.series_data || {})[seriesId];
-    if (!runSeries) return null;
-    if (paramName === 'gamma') return { x: runSeries.gamma_values, y: runSeries.gamma_dual };
-    if (paramName === 'n') return { x: runSeries.n_values, y: runSeries.n_dual };
     return null;
   }
 
@@ -1094,11 +1002,9 @@ export default function(component) {
     updateOverlayButtonVisibility(true);
     const grouped = new Map();
     seriesIds.forEach((seriesId) => {
-      const legacy = seriesData[seriesId];
       const generic = seriesDataByParam[seriesId];
-      const series = generic || legacy;
-      if (!series) return;
-      const constraint = series.constraint || 'Other';
+      if (!generic) return;
+      const constraint = generic.constraint || 'Other';
       if (!grouped.has(constraint)) grouped.set(constraint, []);
       grouped.get(constraint).push(seriesId);
     });
@@ -1117,10 +1023,9 @@ export default function(component) {
       });
 
       ids.forEach((seriesId) => {
-        const legacy = seriesData[seriesId];
         const generic = seriesDataByParam[seriesId];
-        const label = (generic && generic.label) || (legacy && legacy.label) || seriesId;
-        if (!generic && !legacy) return;
+        const label = (generic && generic.label) || seriesId;
+        if (!generic) return;
 
         const safeId = sanitizeId(seriesId);
         const safeKey = `${safeId}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1217,8 +1122,6 @@ export default function(component) {
         request_id: Date.now(),
         run_id: runId,
         patterns_by_param: currentPatternsByParam(),
-        pattern_gamma: tauPatternGammaInput ? tauPatternGammaInput.value : initialPatternGamma,
-        pattern_n: tauPatternNInput ? tauPatternNInput.value : initialPatternN,
       });
       return;
     }
@@ -1341,7 +1244,7 @@ export default function(component) {
     if (button.id === 'dual-recompute') {
       event.preventDefault();
       if (!deactivatedForRecompute.size) return;
-      const allSeriesIds = Object.keys(seriesData);
+      const allSeriesIds = Object.keys(seriesDataByParam);
       const activeSeriesIds = allSeriesIds.filter((seriesId) => !deactivatedForRecompute.has(seriesId));
       setTriggerValue('recompute', {
         request_id: Date.now(),
@@ -1350,10 +1253,6 @@ export default function(component) {
         deactivated_labels: Array.from(deactivatedForRecompute.values()),
         local_cursor_indices_by_axis: currentLocalCursorIndicesByAxis(),
         patterns_by_param: currentPatternsByParam(),
-        local_n_idx_for_gamma: localNIdxForGammaPlot,
-        local_gamma_idx_for_n: localGammaIdxForNPlot,
-        pattern_gamma: tauPatternGammaInput ? tauPatternGammaInput.value : initialPatternGamma,
-        pattern_n: tauPatternNInput ? tauPatternNInput.value : initialPatternN,
       });
     }
   });
@@ -1363,15 +1262,11 @@ export default function(component) {
     slider.addEventListener('input', () => {
       const idx = Number(slider.value);
       cursorIndicesByParamState[param] = idx;
-      if (param === 'gamma') globalGammaIdx = idx;
-      if (param === 'n') globalNIdx = idx;
       ensurePlotly(renderTauPlots);
     });
     slider.addEventListener('change', () => {
       const idx = Number(slider.value);
       cursorIndicesByParamState[param] = idx;
-      if (param === 'gamma') globalGammaIdx = idx;
-      if (param === 'n') globalNIdx = idx;
       emitCursorIfChanged();
     });
   });
@@ -1382,8 +1277,6 @@ export default function(component) {
       if (!axis || !param) return;
       const idx = Number(slider.value);
       localCursorIndicesByAxisState[axis] = { ...(localCursorIndicesByAxisState[axis] || {}), [param]: idx };
-      if (param === 'n') localNIdxForGammaPlot = idx;
-      if (param === 'gamma') localGammaIdxForNPlot = idx;
       ensurePlotly(renderTauPlots);
     });
     slider.addEventListener('change', () => {
@@ -1392,8 +1285,6 @@ export default function(component) {
       if (!axis || !param) return;
       const idx = Number(slider.value);
       localCursorIndicesByAxisState[axis] = { ...(localCursorIndicesByAxisState[axis] || {}), [param]: idx };
-      if (param === 'n') localNIdxForGammaPlot = idx;
-      if (param === 'gamma') localGammaIdxForNPlot = idx;
       ensurePlotly(renderTauPlots);
       emitCursorIfChanged();
     });
@@ -1429,7 +1320,7 @@ export default function(component) {
 
   const selectedSeries = (data && data.selected_series_ids) || [];
   selectedSeries.forEach((seriesId) => {
-    const series = seriesData[seriesId] || seriesDataByParam[seriesId];
+    const series = seriesDataByParam[seriesId];
     if (!series) return;
     plotSelectionMap.set(seriesId, series.label || seriesId);
   });

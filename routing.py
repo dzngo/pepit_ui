@@ -29,7 +29,6 @@ from utils import (
     _parse_float_list,
     build_dual_section_html,
     build_dual_series_by_param,
-    build_dual_series_data,
     build_dual_slice_by_param,
     build_tau_series_by_param,
     clear_algorithm_caches,
@@ -60,7 +59,6 @@ def reset_for_algorithm_change(algo_key: str):
 
 _HYPERPARAM_COLUMNS = ("name", "label", "value_type", "min", "max", "step", "default")
 _HYPERPARAM_RESERVED_NAMES = {"x", "pi", "e"}
-_CURRENT_REQUIRED_RUNTIME_PARAMS = ("gamma", "n")
 
 
 def _hyperparameter_rows_from_specs(specs: list[HyperparameterSpec]) -> list[dict]:
@@ -209,20 +207,24 @@ def _parse_hyperparameter_specs(rows: list[dict]) -> tuple[list[HyperparameterSp
 
     if not specs:
         errors.append("At least one hyperparameter is required.")
-    missing_required = [name for name in _CURRENT_REQUIRED_RUNTIME_PARAMS if name not in {hp.name for hp in specs}]
-    if missing_required:
-        errors.append(
-            "Current compute/plot engine still requires these hyperparameters: " + ", ".join(missing_required) + "."
-        )
     return specs, errors
+
+
+def _primary_pair_specs(
+    hyperparameter_specs: list[HyperparameterSpec],
+) -> tuple[HyperparameterSpec, HyperparameterSpec]:
+    if not hyperparameter_specs:
+        raise ValueError("At least one hyperparameter is required.")
+    first_spec = hyperparameter_specs[0]
+    if len(hyperparameter_specs) > 1:
+        second_spec = hyperparameter_specs[1]
+    else:
+        second_spec = hyperparameter_specs[0]
+    return first_spec, second_spec
 
 
 def _cursor_indices_key(algo_key: str) -> str:
     return f"cursor_indices_by_param_{algo_key}"
-
-
-def _local_cursor_indices_key(algo_key: str) -> str:
-    return f"local_cursor_indices_by_param_{algo_key}"
 
 
 def _local_cursor_indices_by_axis_key(algo_key: str) -> str:
@@ -295,35 +297,6 @@ def _clamp_local_cursor_indices_by_axis(
     return clamped
 
 
-def _legacy_local_from_axis(
-    local_by_axis: dict[str, dict[str, int]],
-    cursor_indices: dict[str, int],
-) -> dict[str, int]:
-    legacy = dict(cursor_indices)
-    gamma_axis = local_by_axis.get("gamma", {})
-    n_axis = local_by_axis.get("n", {})
-    if "n" in gamma_axis:
-        legacy["n"] = int(gamma_axis["n"])
-    if "gamma" in n_axis:
-        legacy["gamma"] = int(n_axis["gamma"])
-    return legacy
-
-
-def _sync_legacy_gamma_n_state(
-    *,
-    algo_key: str,
-    cursor_indices: dict[str, int],
-    local_cursor_indices: dict[str, int],
-    patterns_by_param: dict[str, str],
-) -> None:
-    st.session_state[f"gamma_idx_{algo_key}"] = int(cursor_indices.get("gamma", 0))
-    st.session_state[f"n_idx_{algo_key}"] = int(cursor_indices.get("n", 0))
-    st.session_state[f"tau_local_n_idx_for_gamma_{algo_key}"] = int(local_cursor_indices.get("n", 0))
-    st.session_state[f"tau_local_gamma_idx_for_n_{algo_key}"] = int(local_cursor_indices.get("gamma", 0))
-    st.session_state[f"tau_pattern_gamma_{algo_key}"] = str(patterns_by_param.get("gamma", ""))
-    st.session_state[f"tau_pattern_n_{algo_key}"] = str(patterns_by_param.get("n", ""))
-
-
 def _steps_source(spec: AlgorithmSpec) -> str:
     return get_algorithm_steps_code(spec.name)
 
@@ -369,10 +342,6 @@ def _run_steps_smoke_test(
         algo_params: dict[str, float | int] = {}
         for hp in configured_hyperparameters:
             value = hp.default
-            if hp.name == "gamma" and test_context.get("gamma_min") is not None:
-                value = float(test_context["gamma_min"])
-            elif hp.name == "n" and test_context.get("n_min") is not None:
-                value = float(test_context["n_min"])
             algo_params[hp.name] = int(round(value)) if hp.value_type == "int" else float(value)
         run_algorithm(
             algo_spec=temp_spec,
@@ -490,14 +459,9 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             for error in hyperparameter_errors:
                 st.error(error)
 
-            specs_by_name = {hp.name: hp for hp in hyperparameter_specs}
-            gamma_spec = specs_by_name.get("gamma")
-            n_spec = specs_by_name.get("n")
             runtime_param_errors: list[str] = []
-            if gamma_spec is None:
-                runtime_param_errors.append("Missing required hyperparameter: gamma.")
-            if n_spec is None:
-                runtime_param_errors.append("Missing required hyperparameter: n.")
+            legacy_specs_source = list(hyperparameter_specs) or list(spec.default_hyperparameters)
+            primary_spec, secondary_spec = _primary_pair_specs(legacy_specs_source)
 
         with st.container(border=True):
             st.write("Functions")
@@ -632,8 +596,6 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                     "function_param_errors": list(function_param_errors),
                     "runtime_param_errors": runtime_param_errors,
                     "hyperparameter_specs": list(hyperparameter_specs),
-                    "gamma_min": float(gamma_spec.min_value) if gamma_spec else None,
-                    "n_min": float(n_spec.min_value) if n_spec else None,
                 },
             )
 
@@ -673,9 +635,6 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             for error in errors:
                 st.error(error)
             return
-        if gamma_spec is None or n_spec is None:
-            st.error("Missing runtime hyperparameters gamma/n.")
-            return
         plot_test_context = {
             "function_config": {
                 slot.key: {
@@ -687,8 +646,6 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             "function_param_errors": list(function_param_errors),
             "runtime_param_errors": runtime_param_errors,
             "hyperparameter_specs": list(hyperparameter_specs),
-            "gamma_min": float(gamma_spec.min_value) if gamma_spec else None,
-            "n_min": float(n_spec.min_value) if n_spec else None,
         }
         test_error = _run_steps_smoke_test(
             spec=spec,
@@ -702,8 +659,8 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
         st.session_state["pending_settings"] = {
             "algo_key": algo_key,
             "hyperparameter_specs": list(hyperparameter_specs),
-            "gamma_spec": gamma_spec,
-            "n_spec": n_spec,
+            "primary_spec": primary_spec,
+            "secondary_spec": secondary_spec,
             "function_config": {
                 slot.key: {
                     "function_key": st.session_state["function_store"][algo_key][slot.key],
@@ -723,8 +680,8 @@ def render_loading_phase(algo_key: str, spec):
         st.session_state["ui_phase"] = "config"
         st.rerun()
 
-    gamma_spec = pending["gamma_spec"]
-    n_spec = pending["n_spec"]
+    primary_spec = pending["primary_spec"]
+    secondary_spec = pending["secondary_spec"]
     hyperparameter_specs = list(pending.get("hyperparameter_specs", []))
     st.subheader(f"Computing tau values for `{spec.name}`")
 
@@ -732,18 +689,10 @@ def render_loading_phase(algo_key: str, spec):
         summary_lines = [
             f"**Algorithm**: `{spec.name}`",
         ]
-        if hyperparameter_specs:
-            for hp in hyperparameter_specs:
-                summary_lines.append(
-                    f"**{hp.name}**: [{hp.min_value}, {hp.max_value}], "
-                    f"step_size={hp.step}, default={hp.default}, type={hp.value_type}"
-                )
-        else:
-            summary_lines.extend(
-                [
-                    f"**gamma**: [{gamma_spec.min_value}, {gamma_spec.max_value}], step_size={gamma_spec.step}",
-                    f"**n**: [{n_spec.min_value}, {n_spec.max_value}], step_size={n_spec.step}",
-                ]
+        for hp in hyperparameter_specs:
+            summary_lines.append(
+                f"**{hp.name}**: [{hp.min_value}, {hp.max_value}], "
+                f"step_size={hp.step}, default={hp.default}, type={hp.value_type}"
             )
         st.markdown("<br>".join(summary_lines), unsafe_allow_html=True)
         st.markdown("**Steps**")
@@ -759,8 +708,8 @@ def render_loading_phase(algo_key: str, spec):
 
     result = compute(
         algo_key,
-        gamma_spec,
-        n_spec,
+        primary_spec,
+        secondary_spec,
         pending["function_config"],
         hyperparameter_specs=hyperparameter_specs,
         show_progress=True,
@@ -783,19 +732,11 @@ def render_loading_phase(algo_key: str, spec):
     st.session_state.pop(_last_remove_event_key(algo_key), None)
     st.session_state[f"dual_selected_{algo_key}"] = []
     cursor_indices = _default_cursor_indices(hyperparameter_specs)
-    local_cursor_indices = dict(cursor_indices)
     local_cursor_indices_by_axis = _default_local_cursor_indices_by_axis(hyperparameter_specs, cursor_indices)
     patterns_by_param = {hp.name: "" for hp in hyperparameter_specs}
     st.session_state[_cursor_indices_key(algo_key)] = cursor_indices
-    st.session_state[_local_cursor_indices_key(algo_key)] = local_cursor_indices
     st.session_state[_local_cursor_indices_by_axis_key(algo_key)] = local_cursor_indices_by_axis
     st.session_state[_patterns_by_param_key(algo_key)] = patterns_by_param
-    _sync_legacy_gamma_n_state(
-        algo_key=algo_key,
-        cursor_indices=cursor_indices,
-        local_cursor_indices=_legacy_local_from_axis(local_cursor_indices_by_axis, cursor_indices),
-        patterns_by_param=patterns_by_param,
-    )
     st.rerun()
 
 
@@ -807,8 +748,8 @@ def render_results_phase(algo_key: str, spec):
 
     result = compute(
         algo_key,
-        settings["gamma_spec"],
-        settings["n_spec"],
+        settings["primary_spec"],
+        settings["secondary_spec"],
         settings["function_config"],
         hyperparameter_specs=list(settings.get("hyperparameter_specs", [])),
         show_progress=False,
@@ -819,9 +760,7 @@ def render_results_phase(algo_key: str, spec):
         st.session_state["ui_phase"] = "loading"
         st.rerun()
 
-    gamma_values, n_values, tau_grid, cached_warnings, duals_grid = result
-    gamma_spec = settings["gamma_spec"]
-    n_spec = settings["n_spec"]
+    _, _, tau_grid, cached_warnings, duals_grid = result
     hyperparameter_specs = list(settings.get("hyperparameter_specs", []))
     specs_by_name = {hp.name: hp for hp in hyperparameter_specs}
     param_values_by_name = _param_values_by_name(hyperparameter_specs)
@@ -854,7 +793,6 @@ def render_results_phase(algo_key: str, spec):
             else:
                 st.markdown("*params*: `{}`")
     cursor_state_key = _cursor_indices_key(algo_key)
-    local_cursor_state_key = _local_cursor_indices_key(algo_key)
     local_axis_state_key = _local_cursor_indices_by_axis_key(algo_key)
     pattern_state_key = _patterns_by_param_key(algo_key)
     default_cursor = _default_cursor_indices(hyperparameter_specs)
@@ -862,45 +800,19 @@ def render_results_phase(algo_key: str, spec):
         dict(st.session_state.get(cursor_state_key, default_cursor)),
         hyperparameter_specs,
     )
-    local_cursor_indices = _clamp_cursor_indices(
-        dict(st.session_state.get(local_cursor_state_key, cursor_indices)),
-        hyperparameter_specs,
-    )
     local_cursor_indices_by_axis = _clamp_local_cursor_indices_by_axis(
         dict(st.session_state.get(local_axis_state_key, {})),
         hyperparameter_specs,
-        local_cursor_indices,
+        cursor_indices,
     )
     patterns_by_param = dict(st.session_state.get(pattern_state_key, {}))
     for hp in hyperparameter_specs:
         patterns_by_param[hp.name] = str(patterns_by_param.get(hp.name, ""))
 
-    gamma_idx = max(0, min(int(cursor_indices.get("gamma", 0)), len(gamma_values) - 1))
-    n_idx = max(0, min(int(cursor_indices.get("n", 0)), len(n_values) - 1))
-    tau_local_n_idx_for_gamma = max(
-        0,
-        min(int(local_cursor_indices_by_axis.get("gamma", {}).get("n", n_idx)), len(n_values) - 1),
-    )
-    tau_local_gamma_idx_for_n = max(
-        0,
-        min(int(local_cursor_indices_by_axis.get("n", {}).get("gamma", gamma_idx)), len(gamma_values) - 1),
-    )
-    cursor_indices["gamma"] = gamma_idx
-    cursor_indices["n"] = n_idx
-    local_cursor_indices["n"] = tau_local_n_idx_for_gamma
-    local_cursor_indices["gamma"] = tau_local_gamma_idx_for_n
-    local_cursor_indices_by_axis.setdefault("gamma", {})["n"] = tau_local_n_idx_for_gamma
-    local_cursor_indices_by_axis.setdefault("n", {})["gamma"] = tau_local_gamma_idx_for_n
+    cursor_indices = _clamp_cursor_indices(cursor_indices, hyperparameter_specs)
     st.session_state[cursor_state_key] = cursor_indices
-    st.session_state[local_cursor_state_key] = local_cursor_indices
     st.session_state[local_axis_state_key] = local_cursor_indices_by_axis
     st.session_state[pattern_state_key] = patterns_by_param
-    _sync_legacy_gamma_n_state(
-        algo_key=algo_key,
-        cursor_indices=cursor_indices,
-        local_cursor_indices=_legacy_local_from_axis(local_cursor_indices_by_axis, cursor_indices),
-        patterns_by_param=patterns_by_param,
-    )
     base_param_values, invalid_params, conflict_params = _build_pattern_param_values(settings["function_config"])
     warning_messages = set(cached_warnings)
     runs = st.session_state.setdefault(_runs_key(algo_key), [])
@@ -913,8 +825,8 @@ def render_results_phase(algo_key: str, spec):
             continue
         run_result = compute(
             algo_key,
-            settings["gamma_spec"],
-            settings["n_spec"],
+            settings["primary_spec"],
+            settings["secondary_spec"],
             settings["function_config"],
             hyperparameter_specs=list(settings.get("hyperparameter_specs", [])),
             show_progress=False,
@@ -1021,36 +933,15 @@ def render_results_phase(algo_key: str, spec):
 
     event = render_dual_values_panel(
         algo_key,
-        duals_grid,
-        gamma_values,
-        n_values,
-        gamma_idx,
-        n_idx,
         runs,
-        run_results,
         run_tau_series_by_param,
         run_series_data_by_param,
         tau_payload={
-            "gamma_values": [float(value) for value in gamma_values],
-            "n_values": [float(value) for value in n_values],
-            "gamma_spec": {
-                "min": float(gamma_spec.min_value),
-                "max": float(gamma_spec.max_value),
-                "step": float(gamma_spec.step),
-                "value_type": str(gamma_spec.value_type),
-            },
-            "n_spec": {
-                "min": float(n_spec.min_value),
-                "max": float(n_spec.max_value),
-                "step": float(n_spec.step),
-                "value_type": str(n_spec.value_type),
-            },
             "tau_grid": tau_grid_payload,
             "tau_series_by_param": tau_series_by_param,
             "param_order": [hp.name for hp in hyperparameter_specs],
             "param_values_by_name": param_values_by_name,
             "cursor_indices_by_param": {name: int(idx) for name, idx in cursor_indices.items()},
-            "local_cursor_indices_by_param": {name: int(idx) for name, idx in local_cursor_indices.items()},
             "local_cursor_indices_by_axis": {
                 axis: {name: int(idx) for name, idx in axis_map.items()}
                 for axis, axis_map in local_cursor_indices_by_axis.items()
@@ -1059,12 +950,6 @@ def render_results_phase(algo_key: str, spec):
             "sections_html_by_param": sections_html_by_param,
             "plot_titles_by_param": plot_titles_by_param,
             "series_data_by_param": series_data_by_param,
-            "default_gamma_idx": gamma_idx,
-            "default_n_idx": n_idx,
-            "default_local_n_idx_for_gamma": tau_local_n_idx_for_gamma,
-            "default_local_gamma_idx_for_n": tau_local_gamma_idx_for_n,
-            "pattern_gamma": str(patterns_by_param.get("gamma", "")),
-            "pattern_n": str(patterns_by_param.get("n", "")),
             "pattern_params": {name: float(value) for name, value in sorted(base_param_values.items())},
             "pattern_invalid_params": [str(name) for name in invalid_params],
             "pattern_conflict_params": [str(name) for name in conflict_params],
@@ -1083,15 +968,9 @@ def render_results_phase(algo_key: str, spec):
                     for name in specs_by_name:
                         if name in incoming_cursor:
                             next_cursor_indices[name] = int(incoming_cursor[name])
-                else:
-                    next_cursor_indices["gamma"] = int(event.get("gamma_idx", gamma_idx))
-                    next_cursor_indices["n"] = int(event.get("n_idx", n_idx))
-
-                next_local_cursor_indices = dict(local_cursor_indices)
                 next_local_cursor_indices_by_axis = dict(local_cursor_indices_by_axis)
                 incoming_local_cursor_by_axis = event.get("local_cursor_indices_by_axis")
-                has_axis_payload = isinstance(incoming_local_cursor_by_axis, dict)
-                if has_axis_payload:
+                if isinstance(incoming_local_cursor_by_axis, dict):
                     for axis_name in specs_by_name:
                         axis_payload = incoming_local_cursor_by_axis.get(axis_name)
                         if not isinstance(axis_payload, dict):
@@ -1103,22 +982,6 @@ def render_results_phase(algo_key: str, spec):
                             if name in axis_payload:
                                 next_axis[name] = int(axis_payload[name])
                         next_local_cursor_indices_by_axis[axis_name] = next_axis
-                incoming_local_cursor = event.get("local_cursor_indices_by_param")
-                if (not has_axis_payload) and isinstance(incoming_local_cursor, dict):
-                    for name in specs_by_name:
-                        if name in incoming_local_cursor:
-                            next_local_cursor_indices[name] = int(incoming_local_cursor[name])
-                            for axis_name in specs_by_name:
-                                if axis_name == name:
-                                    continue
-                                next_axis = dict(next_local_cursor_indices_by_axis.get(axis_name, {}))
-                                next_axis[name] = int(incoming_local_cursor[name])
-                                next_local_cursor_indices_by_axis[axis_name] = next_axis
-                elif not has_axis_payload:
-                    next_local_cursor_indices["n"] = int(event.get("local_n_idx_for_gamma", tau_local_n_idx_for_gamma))
-                    next_local_cursor_indices["gamma"] = int(
-                        event.get("local_gamma_idx_for_n", tau_local_gamma_idx_for_n)
-                    )
 
                 next_patterns_by_param = dict(patterns_by_param)
                 incoming_patterns = event.get("patterns_by_param")
@@ -1126,29 +989,16 @@ def render_results_phase(algo_key: str, spec):
                     for name in specs_by_name:
                         if name in incoming_patterns:
                             next_patterns_by_param[name] = str(incoming_patterns[name])
-                else:
-                    next_patterns_by_param["gamma"] = str(event.get("pattern_gamma", ""))
-                    next_patterns_by_param["n"] = str(event.get("pattern_n", ""))
 
                 next_cursor_indices = _clamp_cursor_indices(next_cursor_indices, hyperparameter_specs)
-                next_local_cursor_indices = _clamp_cursor_indices(next_local_cursor_indices, hyperparameter_specs)
                 next_local_cursor_indices_by_axis = _clamp_local_cursor_indices_by_axis(
                     next_local_cursor_indices_by_axis,
                     hyperparameter_specs,
-                    next_local_cursor_indices,
+                    next_cursor_indices,
                 )
                 st.session_state[cursor_state_key] = next_cursor_indices
-                st.session_state[local_cursor_state_key] = next_local_cursor_indices
                 st.session_state[local_axis_state_key] = next_local_cursor_indices_by_axis
                 st.session_state[pattern_state_key] = next_patterns_by_param
-                _sync_legacy_gamma_n_state(
-                    algo_key=algo_key,
-                    cursor_indices=next_cursor_indices,
-                    local_cursor_indices=_legacy_local_from_axis(
-                        next_local_cursor_indices_by_axis, next_cursor_indices
-                    ),
-                    patterns_by_param=next_patterns_by_param,
-                )
                 st.session_state[cursor_event_key] = event_id
                 st.rerun()
         elif event_type == "metric":
@@ -1179,16 +1029,7 @@ def render_results_phase(algo_key: str, spec):
                     for name in specs_by_name:
                         if name in incoming_patterns:
                             next_patterns_by_param[name] = str(incoming_patterns[name])
-                else:
-                    next_patterns_by_param["gamma"] = str(event.get("pattern_gamma", ""))
-                    next_patterns_by_param["n"] = str(event.get("pattern_n", ""))
                 st.session_state[pattern_state_key] = next_patterns_by_param
-                _sync_legacy_gamma_n_state(
-                    algo_key=algo_key,
-                    cursor_indices=cursor_indices,
-                    local_cursor_indices=_legacy_local_from_axis(local_cursor_indices_by_axis, cursor_indices),
-                    patterns_by_param=next_patterns_by_param,
-                )
                 if run_id:
                     runs[:] = [run for run in runs if str(run.get("id", "")) != run_id]
                 st.session_state[remove_event_key] = event_id
@@ -1198,11 +1039,9 @@ def render_results_phase(algo_key: str, spec):
                 active_series_ids = tuple(sorted(set(event.get("selected_series_ids", []))))
                 deactivated_series_ids = list(dict.fromkeys(event.get("deactivated_series_ids", [])))
                 deactivated_labels = list(event.get("deactivated_labels", []))
-                next_local_cursor_indices = dict(local_cursor_indices)
                 next_local_cursor_indices_by_axis = dict(local_cursor_indices_by_axis)
                 incoming_local_cursor_by_axis = event.get("local_cursor_indices_by_axis")
-                has_axis_payload = isinstance(incoming_local_cursor_by_axis, dict)
-                if has_axis_payload:
+                if isinstance(incoming_local_cursor_by_axis, dict):
                     for axis_name in specs_by_name:
                         axis_payload = incoming_local_cursor_by_axis.get(axis_name)
                         if not isinstance(axis_payload, dict):
@@ -1214,22 +1053,6 @@ def render_results_phase(algo_key: str, spec):
                             if name in axis_payload:
                                 next_axis[name] = int(axis_payload[name])
                         next_local_cursor_indices_by_axis[axis_name] = next_axis
-                incoming_local_cursor = event.get("local_cursor_indices_by_param")
-                if (not has_axis_payload) and isinstance(incoming_local_cursor, dict):
-                    for name in specs_by_name:
-                        if name in incoming_local_cursor:
-                            next_local_cursor_indices[name] = int(incoming_local_cursor[name])
-                            for axis_name in specs_by_name:
-                                if axis_name == name:
-                                    continue
-                                next_axis = dict(next_local_cursor_indices_by_axis.get(axis_name, {}))
-                                next_axis[name] = int(incoming_local_cursor[name])
-                                next_local_cursor_indices_by_axis[axis_name] = next_axis
-                elif not has_axis_payload:
-                    next_local_cursor_indices["n"] = int(event.get("local_n_idx_for_gamma", tau_local_n_idx_for_gamma))
-                    next_local_cursor_indices["gamma"] = int(
-                        event.get("local_gamma_idx_for_n", tau_local_gamma_idx_for_n)
-                    )
 
                 next_patterns_by_param = dict(patterns_by_param)
                 incoming_patterns = event.get("patterns_by_param")
@@ -1237,30 +1060,18 @@ def render_results_phase(algo_key: str, spec):
                     for name in specs_by_name:
                         if name in incoming_patterns:
                             next_patterns_by_param[name] = str(incoming_patterns[name])
-                else:
-                    next_patterns_by_param["gamma"] = str(event.get("pattern_gamma", ""))
-                    next_patterns_by_param["n"] = str(event.get("pattern_n", ""))
-
-                next_local_cursor_indices = _clamp_cursor_indices(next_local_cursor_indices, hyperparameter_specs)
                 next_local_cursor_indices_by_axis = _clamp_local_cursor_indices_by_axis(
                     next_local_cursor_indices_by_axis,
                     hyperparameter_specs,
-                    next_local_cursor_indices,
+                    cursor_indices,
                 )
-                st.session_state[local_cursor_state_key] = next_local_cursor_indices
                 st.session_state[local_axis_state_key] = next_local_cursor_indices_by_axis
                 st.session_state[pattern_state_key] = next_patterns_by_param
-                _sync_legacy_gamma_n_state(
-                    algo_key=algo_key,
-                    cursor_indices=cursor_indices,
-                    local_cursor_indices=_legacy_local_from_axis(next_local_cursor_indices_by_axis, cursor_indices),
-                    patterns_by_param=next_patterns_by_param,
-                )
                 with st.spinner("Recomputing tau grid with selected dual values..."):
                     recompute_result = compute(
                         algo_key,
-                        settings["gamma_spec"],
-                        settings["n_spec"],
+                        settings["primary_spec"],
+                        settings["secondary_spec"],
                         settings["function_config"],
                         hyperparameter_specs=list(settings.get("hyperparameter_specs", [])),
                         show_progress=True,
@@ -1325,20 +1136,11 @@ def _last_remove_event_key(algo_key: str) -> str:
 
 def render_dual_values_panel(
     algo_key: str,
-    duals_grid: list[list[dict]],
-    gamma_values: np.ndarray,
-    n_values: np.ndarray,
-    gamma_idx: int,
-    n_idx: int,
     runs: list[dict],
-    run_results: dict[str, tuple],
     run_tau_series_by_param: dict[str, dict[str, dict[str, object]]],
     run_series_data_by_param: dict[str, dict],
     tau_payload: dict,
 ) -> dict | None:
-    if not duals_grid:
-        st.caption("No dual values available for these settings.")
-        return None
     metric_labels = {
         "non_zero_pct": "Non-zero %",
         "non_zero_pct_with_none": "Non-zero % (None=0)",
@@ -1356,51 +1158,9 @@ def render_dual_values_panel(
         metric = "non_zero_pct_with_none"
         st.session_state[metric_state_key] = metric
 
-    current_duals = duals_grid[gamma_idx][n_idx] if duals_grid else {}
-    gamma_slice = [row[n_idx] for row in duals_grid]
-    n_slice = list(duals_grid[gamma_idx])
-    gamma_ranking = dual_ranking_by_slice(gamma_slice, metric=metric)
-    n_ranking = dual_ranking_by_slice(n_slice, metric=metric)
-    series_data = build_dual_series_data(
-        duals_grid,
-        gamma_values,
-        n_values,
-        gamma_idx,
-        n_idx,
-    )
-
-    gamma_ranking_title = f"Ranking vs gamma (n = {n_values[n_idx]})"
-    n_ranking_title = f"Ranking vs n (gamma = {gamma_values[gamma_idx]})"
-    gamma_html, _ = build_dual_section_html(
-        section_id=f"{algo_key}-gamma",
-        section_key="gamma",
-        title=gamma_ranking_title,
-        dual_ranking=gamma_ranking,
-        current_duals=current_duals,
-    )
-    n_html, _ = build_dual_section_html(
-        section_id=f"{algo_key}-n",
-        section_key="n",
-        title=n_ranking_title,
-        dual_ranking=n_ranking,
-        current_duals=current_duals,
-    )
-    gamma_plot_title = f"Dual value vs gamma (n = {n_values[n_idx]})"
-    n_plot_title = f"Dual value vs n (gamma = {gamma_values[gamma_idx]})"
     selected_series_ids = st.session_state.get(f"dual_selected_{algo_key}", [])
     dual_runs_data: list[dict] = []
     for run in runs:
-        run_result = run_results.get(run["id"])
-        if run_result is None:
-            continue
-        run_duals_grid = run_result[4]
-        run_series_data = build_dual_series_data(
-            run_duals_grid,
-            gamma_values,
-            n_values,
-            gamma_idx,
-            n_idx,
-        )
         dual_runs_data.append(
             {
                 "id": run["id"],
@@ -1409,13 +1169,8 @@ def render_dual_values_panel(
                 "selected_labels": [
                     str(label) for label in run.get("deactivated_labels", run.get("selected_labels", []))
                 ],
-                "tau_grid": [
-                    [float(value) if value is not None and np.isfinite(value) else None for value in row]
-                    for row in run_result[2]
-                ],
                 "tau_series_by_param": run_tau_series_by_param.get(run["id"], {}),
                 "series_data_by_param": run_series_data_by_param.get(run["id"], {}),
-                "series_data": run_series_data,
             }
         )
     result = DUAL_PANEL_COMPONENT(
@@ -1423,13 +1178,8 @@ def render_dual_values_panel(
         data={
             "css": DUAL_PANEL_CSS,
             "tau_payload": tau_payload,
-            "series_data": series_data,
             "series_data_by_param": tau_payload.get("series_data_by_param", {}),
             "dual_runs": dual_runs_data,
-            "gamma_html": gamma_html,
-            "n_html": n_html,
-            "plot_title_gamma": gamma_plot_title,
-            "plot_title_n": n_plot_title,
             "selected_series_ids": selected_series_ids,
             "metric": metric,
             "metric_labels": metric_labels,

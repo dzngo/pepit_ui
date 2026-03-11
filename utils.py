@@ -531,14 +531,16 @@ def compute(
         return None
 
     param_values, tau_nd, warnings_tuple, duals_nd = nd_result
-    specs_by_name = {hp.name: hp for hp in effective_hyperparameter_specs}
-    if "gamma" not in specs_by_name or "n" not in specs_by_name:
-        raise ValueError("Configured hyperparameters must include both 'gamma' and 'n' for current UI.")
+    first_name = effective_hyperparameter_specs[0].name
+    if len(effective_hyperparameter_specs) > 1:
+        second_name = effective_hyperparameter_specs[1].name
+    else:
+        second_name = first_name
 
-    gamma_values = np.asarray(param_values["gamma"], dtype=float)
-    n_values = np.asarray(param_values["n"], dtype=float)
-    gamma_axis = next(i for i, hp in enumerate(effective_hyperparameter_specs) if hp.name == "gamma")
-    n_axis = next(i for i, hp in enumerate(effective_hyperparameter_specs) if hp.name == "n")
+    gamma_values = np.asarray(param_values[first_name], dtype=float)
+    n_values = np.asarray(param_values[second_name], dtype=float)
+    gamma_axis = 0
+    n_axis = 1 if len(effective_hyperparameter_specs) > 1 else 0
 
     tau_grid = np.full((len(gamma_values), len(n_values)), np.nan, dtype=float)
     duals_grid = [[{} for _ in range(len(n_values))] for _ in range(len(gamma_values))]
@@ -903,7 +905,7 @@ def _build_pattern_param_values(function_config: dict) -> tuple[dict[str, float]
     conflicts: list[str] = []
     for _, slot_config in sorted(function_config.items()):
         for name, raw in (slot_config.get("function_params") or {}).items():
-            if name in ("x", "gamma", "n", "pi", "e"):
+            if name in ("x", "pi", "e"):
                 conflicts.append(name)
                 continue
             value = None
