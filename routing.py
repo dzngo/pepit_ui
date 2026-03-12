@@ -8,19 +8,21 @@ import streamlit as st
 import streamlit.components.v2 as components_v2
 from streamlit_ace import st_ace
 
-from algorithms_registry import (
+from algorithm.algorithm_custom import (
     ALGORITHMS,
     CUSTOM_ALGORITHMS,
-    FUNCTIONS,
-    AlgorithmSpec,
-    HyperparameterSpec,
     _compile_steps,
-    default_gamma_n_hyperparameters,
     get_algorithm_steps_code,
     get_base_algorithm_name,
     register_custom_algorithm,
     remove_custom_algorithm,
-    run_algorithm,
+)
+from algorithm.function_registry import FUNCTIONS
+from algorithm.runtime import run_algorithm
+from algorithm.types import (
+    AlgorithmSpec,
+    HyperparameterSpec,
+    default_gamma_n_hyperparameters,
 )
 from utils import (
     _build_pattern_param_values,

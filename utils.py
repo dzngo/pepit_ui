@@ -13,12 +13,9 @@ import numpy as np
 import streamlit as st
 import sympy as sp
 
-from algorithms_registry import (
-    ALGORITHMS,
-    AlgorithmEvaluationError,
-    HyperparameterSpec,
-    run_algorithm,
-)
+from algorithm.algorithm_custom import ALGORITHMS
+from algorithm.runtime import run_algorithm
+from algorithm.types import AlgorithmEvaluationError, HyperparameterSpec
 
 
 def slider_for_param(

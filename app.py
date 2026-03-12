@@ -1,7 +1,7 @@
 # app.py
 import streamlit as st
 
-from algorithms_registry import ALGORITHMS
+from algorithm.algorithm_custom import ALGORITHMS
 from routing import (
     init_session_state,
     render_config_phase,
