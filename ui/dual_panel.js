@@ -598,7 +598,7 @@ export default function(component) {
       mode: 'lines',
       name: traceName,
       showlegend: false,
-      line: { color: '#ff8a00', width: 2 },
+      line: { color: '#ff8a00', width: 2, dash: 'dash' },
     }).then(() => {
       overlayState.set(plotId, { traceIndex });
     });
@@ -849,7 +849,7 @@ export default function(component) {
           x: axisSeries.xValues,
           y: overlay.yValues,
           mode: 'lines',
-          line: { color: '#ff8a00', width: 2 },
+          line: { color: '#ff8a00', width: 2, dash: 'dash' },
           hovertemplate: `${escapeHtml(axisParam)}=%{x:.3f}<br>pattern=%{y:.3e}<extra></extra>`,
           showlegend: false,
         });
