@@ -21,19 +21,18 @@
   display: grid;
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
   gap: 16px;
-  align-items: start;
-  height: calc(100vh - 140px);
+  align-items: stretch;
 }
 .dual-shell.is-legend-collapsed {
   grid-template-columns: 72px minmax(0, 1fr);
 }
 .dual-rail {
-  align-self: start;
+  align-self: stretch;
+  min-height: 100%;
 }
 .dual-rail-sticky {
   position: sticky;
-  top: 0;
-  max-height: calc(100vh - 140px);
+  top: 12px;
   overflow: auto;
 }
 .dual-rail-title {
@@ -57,9 +56,6 @@
 }
 .dual-main {
   min-width: 0;
-  max-height: calc(100vh - 140px);
-  overflow-y: auto;
-  padding-right: 4px;
 }
 .dual-legend-toggle {
   border: 1px solid rgba(49, 51, 63, 0.35);
