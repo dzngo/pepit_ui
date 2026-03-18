@@ -135,6 +135,25 @@ export default function(component) {
     return value.replace(/[^a-zA-Z0-9_-]/g, '-');
   }
 
+  const LEGEND_COLLAPSED_KEY = 'dual_legend_collapsed';
+  function readLegendCollapsed() {
+    try {
+      return window.sessionStorage.getItem(LEGEND_COLLAPSED_KEY) === '1';
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function writeLegendCollapsed(collapsed) {
+    try {
+      window.sessionStorage.setItem(LEGEND_COLLAPSED_KEY, collapsed ? '1' : '0');
+    } catch (err) {
+      return;
+    }
+  }
+
+  const legendCollapsedByDefault = readLegendCollapsed();
+
   function ensurePlotly(callback) {
     if (window.Plotly) {
       callback();
@@ -330,69 +349,90 @@ export default function(component) {
   parentElement.innerHTML = `
     <style>${data.css || ''}</style>
     <div class="dual-wrapper">
-      <div class="dual-section-title">Worst-case guarantee</div>
-      <div class="tau-panels-grid">
-        ${tauPanelsHtml()}
+      <div class="dual-shell${legendCollapsedByDefault ? ' is-legend-collapsed' : ''}">
+        <aside class="dual-rail">
+          <div class="dual-rail-sticky">
+            <div class="dual-section-title dual-rail-title">
+              <span class="dual-rail-title-text">Recompute runs legend</span>
+              <button
+                type="button"
+                class="dual-legend-toggle"
+                id="dual-legend-toggle"
+                aria-expanded="${legendCollapsedByDefault ? 'false' : 'true'}"
+                aria-label="${legendCollapsedByDefault ? 'Expand recompute runs legend' : 'Collapse recompute runs legend'}"
+              >
+                ${legendCollapsedByDefault ? '→' : '←'}
+              </button>
+            </div>
+            <div class="dual-panel dual-rail-panel">
+              ${runRowsHtml()}
+            </div>
+          </div>
+        </aside>
+        <main class="dual-main">
+          <div class="dual-section-title">Worst-case guarantee</div>
+          <div class="tau-panels-grid">
+            ${tauPanelsHtml()}
+          </div>
+          <div class="dual-section-title">Dual values</div>
+          <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:10px;">
+            <label for="dual-ranking-metric" style="font-weight:600;">Ranking metric</label>
+            <select id="dual-ranking-metric" style="width:280px;max-width:100%;padding:8px 10px;border-radius:8px;border:1px solid rgba(49,51,63,0.2);">
+              ${metricOptionsHtml()}
+            </select>
+            <button type="button" class="dual-toggle-button is-active" id="dual-toggle-zero">Show all-zero duals</button>
+          </div>
+          </div>
+          ${dualSectionsHtml()}
+          <div class="dual-tabs" role="tablist" aria-label="Dual action tabs">
+            <button
+              type="button"
+              class="dual-tab is-active"
+              id="tab-plot"
+              role="tab"
+              aria-selected="true"
+              aria-controls="tab-panel-plot"
+            >
+              Plot
+            </button>
+            <button
+              type="button"
+              class="dual-tab"
+              id="tab-recompute"
+              role="tab"
+              aria-selected="false"
+              aria-controls="tab-panel-recompute"
+              tabindex="-1"
+            >
+              Recompute
+            </button>
+          </div>
+          <div id="tab-panel-plot" class="dual-tabpanel" role="tabpanel" aria-labelledby="tab-plot">
+            <div class="dual-plot-actions">
+              <button type="button" class="dual-plot-button" id="dual-plot">Plot dual values</button>
+              <button type="button" class="dual-overlay-button" id="dual-overlay" style="display:none;">Overlay plot</button>
+              <button type="button" class="dual-clear-button" id="dual-clear">Select all</button>
+            </div>
+          </div>
+          <div id="tab-panel-recompute" class="dual-tabpanel" role="tabpanel" aria-labelledby="tab-recompute" hidden>
+            <div class="dual-selected-header"><div class="dual-selected-title">Deactivated dual values</div></div>
+            <div id="dual-deactivated-list" class="dual-selected-list">None</div>
+            <div class="dual-plot-actions dual-plot-actions-inline dual-recompute-actions">
+              <button type="button" class="dual-plot-button" id="dual-recompute" disabled>Recompute</button>
+              <button type="button" class="dual-clear-button" id="dual-activate-all">Activate all</button>
+              <button type="button" class="dual-toggle-button is-active" id="dual-deactivate-all">Deactivate all</button>
+            </div>
+          </div>
+          ${dualPlotsHtml()}
+        </main>
       </div>
-      <div class="dual-section-title">Recompute Runs</div>
-      <div class="dual-panel">
-        ${runRowsHtml()}
-      </div>
-      <div class="dual-section-title">Dual values</div>
-      <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;">
-        <div style="display:flex;align-items:center;gap:10px;">
-        <label for="dual-ranking-metric" style="font-weight:600;">Ranking metric</label>
-        <select id="dual-ranking-metric" style="width:280px;max-width:100%;padding:8px 10px;border-radius:8px;border:1px solid rgba(49,51,63,0.2);">
-          ${metricOptionsHtml()}
-        </select>
-        <button type="button" class="dual-toggle-button is-active" id="dual-toggle-zero">Show all-zero duals</button>
-      </div>
-      </div>
-      ${dualSectionsHtml()}
-      <div class="dual-tabs" role="tablist" aria-label="Dual action tabs">
-        <button
-          type="button"
-          class="dual-tab is-active"
-          id="tab-plot"
-          role="tab"
-          aria-selected="true"
-          aria-controls="tab-panel-plot"
-        >
-          Plot
-        </button>
-        <button
-          type="button"
-          class="dual-tab"
-          id="tab-recompute"
-          role="tab"
-          aria-selected="false"
-          aria-controls="tab-panel-recompute"
-          tabindex="-1"
-        >
-          Recompute
-        </button>
-      </div>
-      <div id="tab-panel-plot" class="dual-tabpanel" role="tabpanel" aria-labelledby="tab-plot">
-        <div class="dual-plot-actions">
-          <button type="button" class="dual-plot-button" id="dual-plot">Plot dual values</button>
-          <button type="button" class="dual-overlay-button" id="dual-overlay" style="display:none;">Overlay plot</button>
-          <button type="button" class="dual-clear-button" id="dual-clear">Select all</button>
-        </div>
-      </div>
-      <div id="tab-panel-recompute" class="dual-tabpanel" role="tabpanel" aria-labelledby="tab-recompute" hidden>
-        <div class="dual-selected-header"><div class="dual-selected-title">Deactivated dual values</div></div>
-        <div id="dual-deactivated-list" class="dual-selected-list">None</div>
-        <div class="dual-plot-actions dual-plot-actions-inline dual-recompute-actions">
-          <button type="button" class="dual-plot-button" id="dual-recompute" disabled>Recompute</button>
-          <button type="button" class="dual-clear-button" id="dual-activate-all">Activate all</button>
-          <button type="button" class="dual-toggle-button is-active" id="dual-deactivate-all">Deactivate all</button>
-        </div>
-      </div>
-      ${dualPlotsHtml()}
     </div>
   `;
 
   const root = parentElement;
+  const shellEl = root.querySelector('.dual-shell');
+  const legendToggleBtn = root.querySelector('#dual-legend-toggle');
   const deactivatedListEl = root.querySelector('#dual-deactivated-list');
   const toggleBtn = root.querySelector('#dual-toggle-zero');
   const tabPlotBtn = root.querySelector('#tab-plot');
@@ -1308,6 +1348,19 @@ export default function(component) {
   }
   if (tabRecomputeBtn) {
     tabRecomputeBtn.addEventListener('click', () => setActionTab('recompute'));
+  }
+  if (legendToggleBtn && shellEl) {
+    legendToggleBtn.addEventListener('click', () => {
+      const collapsed = !shellEl.classList.contains('is-legend-collapsed');
+      shellEl.classList.toggle('is-legend-collapsed', collapsed);
+      legendToggleBtn.textContent = collapsed ? '→' : '←';
+      legendToggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      legendToggleBtn.setAttribute(
+        'aria-label',
+        collapsed ? 'Expand recompute runs legend' : 'Collapse recompute runs legend'
+      );
+      writeLegendCollapsed(collapsed);
+    });
   }
 
   tauPatternHintsByParam.forEach((hintEl, param) => {

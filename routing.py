@@ -931,7 +931,7 @@ def render_results_phase(algo_key: str, spec):
                 current_duals=current_duals if isinstance(current_duals, dict) else {},
             )
             sections_html_by_param[hp.name] = html_value
-            plot_titles_by_param[hp.name] = f"Dual value vs {hp.name}"
+            plot_titles_by_param[hp.name] = f"Dual value vs {hp.name} ({fixed_text})"
 
     event = render_dual_values_panel(
         algo_key,
