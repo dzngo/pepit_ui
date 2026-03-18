@@ -177,6 +177,47 @@ export default function(component) {
   }
 
   function runRowsHtml() {
+    function groupedDeactivatedDualsHtml(labels) {
+      const groups = new Map();
+      labels.forEach((rawLabel) => {
+        const label = String(rawLabel || '').trim();
+        if (!label) return;
+        const separator = ' | ';
+        const splitIndex = label.indexOf(separator);
+        if (splitIndex < 0) {
+          const bucket = groups.get(label) || [];
+          groups.set(label, bucket);
+          return;
+        }
+        const constraint = label.slice(0, splitIndex).trim() || 'unknown_constraint';
+        const dualValue = label.slice(splitIndex + separator.length).trim();
+        const bucket = groups.get(constraint) || [];
+        if (dualValue && !bucket.includes(dualValue)) {
+          bucket.push(dualValue);
+        }
+        groups.set(constraint, bucket);
+      });
+
+      if (!groups.size) {
+        return '<span class="dual-badge">No dual values selected.</span>';
+      }
+
+      return Array.from(groups.entries()).map(([constraint, dualValues]) => {
+        if (!dualValues.length) {
+          return `<div class="dual-group-row"><strong>${escapeHtml(constraint)}</strong></div>`;
+        }
+        const valuesHtml = dualValues
+          .map((value) => `<span class="dual-badge">${formatSubscriptText(value)}</span>`)
+          .join('');
+        return (
+          `<div class="dual-group-row">` +
+            `<strong>${escapeHtml(constraint)}:</strong>` +
+            `<span class="dual-group-tags">${valuesHtml}</span>` +
+          `</div>`
+        );
+      }).join('');
+    }
+
     if (!runsById.size) {
       return '<div class="dual-selected-list">No recompute runs yet.</div>';
     }
@@ -195,9 +236,7 @@ export default function(component) {
       const buttonText = isVisible ? 'Hide' : 'View';
       const buttonStateClass = isVisible ? 'is-active' : 'is-neutral';
       const labels = Array.isArray(run.selected_labels) ? run.selected_labels : [];
-      const dualBadges = labels.length
-        ? labels.map((label) => `<span class="dual-badge">${formatDualLabel(String(label))}</span>`).join('')
-        : '<span class="dual-badge">No dual values selected.</span>';
+      const groupedDuals = groupedDeactivatedDualsHtml(labels);
       rows.push(
         `<div class="run-row" data-run-row="${escapeHtml(run.id)}">` +
           `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">` +
@@ -209,7 +248,7 @@ export default function(component) {
           `</div>` +
           `<details style="margin-top:8px;">` +
             `<summary style="cursor:pointer;font-weight:600;">View deactivated duals (${labels.length})</summary>` +
-            `<div class="dual-selected-list" style="margin-top:8px;">${dualBadges}</div>` +
+            `<div class="dual-selected-list" style="margin-top:8px;">${groupedDuals}</div>` +
           `</details>` +
         `</div>`
       );

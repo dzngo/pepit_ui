@@ -89,6 +89,16 @@
   margin-top: 10px;
   padding-top: 10px;
 }
+.dual-group-row + .dual-group-row {
+  margin-top: 6px;
+}
+.dual-group-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
 .dual-section-title {
   font-weight: 600;
   font-size: 1.25rem;
