@@ -2,7 +2,6 @@
 import re
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 import streamlit.components.v2 as components_v2
@@ -35,7 +34,6 @@ from utils import (
     build_tau_series_by_param,
     clear_algorithm_caches,
     compute,
-    compute_nd,
     discrete_values,
     dual_ranking_by_slice,
 )
@@ -210,19 +208,6 @@ def _parse_hyperparameter_specs(rows: list[dict]) -> tuple[list[HyperparameterSp
     if not specs:
         errors.append("At least one hyperparameter is required.")
     return specs, errors
-
-
-def _primary_pair_specs(
-    hyperparameter_specs: list[HyperparameterSpec],
-) -> tuple[HyperparameterSpec, HyperparameterSpec]:
-    if not hyperparameter_specs:
-        raise ValueError("At least one hyperparameter is required.")
-    first_spec = hyperparameter_specs[0]
-    if len(hyperparameter_specs) > 1:
-        second_spec = hyperparameter_specs[1]
-    else:
-        second_spec = hyperparameter_specs[0]
-    return first_spec, second_spec
 
 
 def _cursor_indices_key(algo_key: str) -> str:
@@ -462,9 +447,6 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                 st.error(error)
 
             runtime_param_errors: list[str] = []
-            legacy_specs_source = list(hyperparameter_specs) or list(spec.default_hyperparameters)
-            primary_spec, secondary_spec = _primary_pair_specs(legacy_specs_source)
-
         with st.container(border=True):
             st.write("Functions")
             function_store = st.session_state["function_store"]
@@ -661,8 +643,6 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
         st.session_state["pending_settings"] = {
             "algo_key": algo_key,
             "hyperparameter_specs": list(hyperparameter_specs),
-            "primary_spec": primary_spec,
-            "secondary_spec": secondary_spec,
             "function_config": {
                 slot.key: {
                     "function_key": st.session_state["function_store"][algo_key][slot.key],
@@ -682,8 +662,6 @@ def render_loading_phase(algo_key: str, spec):
         st.session_state["ui_phase"] = "config"
         st.rerun()
 
-    primary_spec = pending["primary_spec"]
-    secondary_spec = pending["secondary_spec"]
     hyperparameter_specs = list(pending.get("hyperparameter_specs", []))
     st.subheader(f"Computing tau values for `{spec.name}`")
 
@@ -710,10 +688,8 @@ def render_loading_phase(algo_key: str, spec):
 
     result = compute(
         algo_key,
-        primary_spec,
-        secondary_spec,
         pending["function_config"],
-        hyperparameter_specs=hyperparameter_specs,
+        hyperparameter_specs,
         show_progress=True,
         rerun_nan_cache=bool(pending.get("rerun_nan_caches", False)),
     )
@@ -750,10 +726,8 @@ def render_results_phase(algo_key: str, spec):
 
     result = compute(
         algo_key,
-        settings["primary_spec"],
-        settings["secondary_spec"],
         settings["function_config"],
-        hyperparameter_specs=list(settings.get("hyperparameter_specs", [])),
+        list(settings.get("hyperparameter_specs", [])),
         show_progress=False,
         rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
     )
@@ -762,7 +736,7 @@ def render_results_phase(algo_key: str, spec):
         st.session_state["ui_phase"] = "loading"
         st.rerun()
 
-    _, _, tau_grid, cached_warnings, duals_grid = result
+    _, _, cached_warnings, _ = result
     hyperparameter_specs = list(settings.get("hyperparameter_specs", []))
     specs_by_name = {hp.name: hp for hp in hyperparameter_specs}
     param_values_by_name = _param_values_by_name(hyperparameter_specs)
@@ -818,7 +792,6 @@ def render_results_phase(algo_key: str, spec):
     base_param_values, invalid_params, conflict_params = _build_pattern_param_values(settings["function_config"])
     warning_messages = set(cached_warnings)
     runs = st.session_state.setdefault(_runs_key(algo_key), [])
-    run_results: dict[str, tuple] = {}
     run_tau_series_by_param: dict[str, dict[str, dict[str, object]]] = {}
     run_series_data_by_param: dict[str, dict] = {}
     for run in runs:
@@ -827,25 +800,14 @@ def render_results_phase(algo_key: str, spec):
             continue
         run_result = compute(
             algo_key,
-            settings["primary_spec"],
-            settings["secondary_spec"],
-            settings["function_config"],
-            hyperparameter_specs=list(settings.get("hyperparameter_specs", [])),
-            show_progress=False,
-            rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
-            selected_dual_series_ids=selected_series_ids,
-        )
-        run_results[run["id"]] = run_result
-        run_nd_result = compute_nd(
-            algo_key,
             settings["function_config"],
             hyperparameter_specs,
             show_progress=False,
             rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
             selected_dual_series_ids=selected_series_ids,
         )
-        if run_nd_result is not None:
-            run_param_values, run_tau_nd, _, run_duals_nd = run_nd_result
+        if run_result is not None:
+            run_param_values, run_tau_nd, _, run_duals_nd = run_result
             run_tau_series_by_param[run["id"]] = build_tau_series_by_param(
                 hyperparameter_specs,
                 run_param_values,
@@ -858,13 +820,8 @@ def render_results_phase(algo_key: str, spec):
                 hyperparameter_specs,
                 cursor_indices,
             )
-        if isinstance(run_result, tuple) and len(run_result) >= 4:
-            for warning in run_result[3]:
+            for warning in run_result[2]:
                 warning_messages.add(f"{run['name']}: {warning}")
-
-    tau_grid_payload = [
-        [float(value) if value is not None and np.isfinite(value) else None for value in row] for row in tau_grid
-    ]
 
     if warning_messages:
         warning_text = "\n".join(sorted(warning_messages))
@@ -872,7 +829,7 @@ def render_results_phase(algo_key: str, spec):
             "Some parameter combinations could not be solved; missing points are shown as gaps.\n" + warning_text
         )
 
-    nd_result = compute_nd(
+    nd_result = compute(
         algo_key,
         settings["function_config"],
         hyperparameter_specs,
@@ -939,7 +896,6 @@ def render_results_phase(algo_key: str, spec):
         run_tau_series_by_param,
         run_series_data_by_param,
         tau_payload={
-            "tau_grid": tau_grid_payload,
             "tau_series_by_param": tau_series_by_param,
             "param_order": [hp.name for hp in hyperparameter_specs],
             "param_values_by_name": param_values_by_name,
@@ -1072,10 +1028,8 @@ def render_results_phase(algo_key: str, spec):
                 with st.spinner("Recomputing tau grid with selected dual values..."):
                     recompute_result = compute(
                         algo_key,
-                        settings["primary_spec"],
-                        settings["secondary_spec"],
                         settings["function_config"],
-                        hyperparameter_specs=list(settings.get("hyperparameter_specs", [])),
+                        list(settings.get("hyperparameter_specs", [])),
                         show_progress=True,
                         rerun_nan_cache=bool(settings.get("rerun_nan_caches", False)),
                         selected_dual_series_ids=active_series_ids,

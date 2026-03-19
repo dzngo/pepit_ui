@@ -161,55 +161,13 @@ def _point_cache_key(
     )
 
 
-def make_cache_key(
-    algo_key: str,
-    gamma_spec: HyperparameterSpec,
-    n_spec: HyperparameterSpec,
-    function_config: Dict[str, Dict[str, object]],
-    hyperparameter_specs: list[HyperparameterSpec] | None = None,
-    selected_dual_series_ids: tuple[str, ...] | None = None,
-) -> Tuple:
-    return (
-        algo_key,
-        (
-            gamma_spec.min_value,
-            gamma_spec.max_value,
-            gamma_spec.step,
-            gamma_spec.value_type,
-        ),
-        (
-            n_spec.min_value,
-            n_spec.max_value,
-            n_spec.step,
-            n_spec.value_type,
-        ),
-        _normalize_hyperparameter_specs(hyperparameter_specs),
-        _normalize_function_config(function_config),
-        tuple(selected_dual_series_ids or ()),
-    )
-
-
 def _value_for_spec(spec: HyperparameterSpec, value: float) -> object:
     if spec.value_type == "int":
         return int(round(value))
     return float(value)
 
 
-def _slice_index_by_defaults(
-    hyperparameter_specs: list[HyperparameterSpec],
-    *,
-    axis_overrides: Dict[str, int] | None = None,
-) -> tuple[int, ...]:
-    overrides = axis_overrides or {}
-    indices: list[int] = []
-    for spec in hyperparameter_specs:
-        idx = int(overrides.get(spec.name, value_index(float(spec.default), spec)))
-        total = int(round((spec.max_value - spec.min_value) / spec.step))
-        indices.append(int(min(max(idx, 0), total)))
-    return tuple(indices)
-
-
-def _compute_nd(
+def compute(
     algo_key: str,
     function_config: Dict[str, Dict[str, object]],
     hyperparameter_specs: list[HyperparameterSpec],
@@ -340,25 +298,6 @@ def _compute_nd(
     return nd_cache[nd_key]
 
 
-def compute_nd(
-    algo_key: str,
-    function_config: Dict[str, Dict[str, object]],
-    hyperparameter_specs: list[HyperparameterSpec],
-    *,
-    show_progress: bool,
-    rerun_nan_cache: bool = False,
-    selected_dual_series_ids: tuple[str, ...] | None = None,
-):
-    return _compute_nd(
-        algo_key,
-        function_config,
-        hyperparameter_specs,
-        show_progress=show_progress,
-        rerun_nan_cache=rerun_nan_cache,
-        selected_dual_series_ids=selected_dual_series_ids,
-    )
-
-
 def build_tau_series_by_param(
     hyperparameter_specs: list[HyperparameterSpec],
     param_values: dict[str, np.ndarray],
@@ -484,90 +423,12 @@ def build_dual_series_by_param(
     return series_data
 
 
-def compute(
-    algo_key: str,
-    gamma_spec: HyperparameterSpec,
-    n_spec: HyperparameterSpec,
-    function_config: Dict[str, Dict[str, object]],
-    hyperparameter_specs: list[HyperparameterSpec] | None = None,
-    *,
-    show_progress: bool,
-    rerun_nan_cache: bool = False,
-    selected_dual_series_ids: tuple[str, ...] | None = None,
-):
-    effective_hyperparameter_specs = list(hyperparameter_specs or [gamma_spec, n_spec])
-    grid_cache = st.session_state.setdefault("tau_grid_cache", {})
-    key = make_cache_key(
-        algo_key,
-        gamma_spec,
-        n_spec,
-        function_config,
-        effective_hyperparameter_specs,
-        selected_dual_series_ids,
-    )
-    if key in grid_cache:
-        cached = grid_cache[key]
-        if isinstance(cached, tuple) and len(cached) == 5:
-            if not rerun_nan_cache:
-                return cached
-            cached_tau_grid = cached[2]
-            if isinstance(cached_tau_grid, np.ndarray) and not np.isnan(cached_tau_grid).any():
-                return cached
-            grid_cache.pop(key, None)
-        else:
-            grid_cache.pop(key, None)
-    nd_result = _compute_nd(
-        algo_key,
-        function_config,
-        effective_hyperparameter_specs,
-        show_progress=show_progress,
-        rerun_nan_cache=rerun_nan_cache,
-        selected_dual_series_ids=selected_dual_series_ids,
-    )
-    if nd_result is None:
-        return None
-
-    param_values, tau_nd, warnings_tuple, duals_nd = nd_result
-    first_name = effective_hyperparameter_specs[0].name
-    if len(effective_hyperparameter_specs) > 1:
-        second_name = effective_hyperparameter_specs[1].name
-    else:
-        second_name = first_name
-
-    gamma_values = np.asarray(param_values[first_name], dtype=float)
-    n_values = np.asarray(param_values[second_name], dtype=float)
-    gamma_axis = 0
-    n_axis = 1 if len(effective_hyperparameter_specs) > 1 else 0
-
-    tau_grid = np.full((len(gamma_values), len(n_values)), np.nan, dtype=float)
-    duals_grid = [[{} for _ in range(len(n_values))] for _ in range(len(gamma_values))]
-
-    base_index = list(_slice_index_by_defaults(effective_hyperparameter_specs))
-    for i in range(len(gamma_values)):
-        for j in range(len(n_values)):
-            base_index[gamma_axis] = i
-            base_index[n_axis] = j
-            idx_tuple = tuple(base_index)
-            tau_grid[i, j] = float(tau_nd[idx_tuple]) if np.isfinite(tau_nd[idx_tuple]) else np.nan
-            dual_value = duals_nd[idx_tuple]
-            duals_grid[i][j] = dual_value if isinstance(dual_value, dict) else {}
-
-    grid_cache[key] = (
-        gamma_values,
-        n_values,
-        tau_grid,
-        tuple(sorted(set(warnings_tuple))),
-        duals_grid,
-    )
-    return grid_cache[key]
-
-
 def clear_algorithm_caches(algo_key: str) -> None:
-    grid_cache = st.session_state.get("tau_grid_cache")
-    if isinstance(grid_cache, dict):
-        keys_to_remove = [key for key in grid_cache.keys() if key and key[0] == algo_key]
+    nd_cache = st.session_state.get("tau_grid_cache_nd")
+    if isinstance(nd_cache, dict):
+        keys_to_remove = [key for key in nd_cache.keys() if key and key[0] == algo_key]
         for key in keys_to_remove:
-            grid_cache.pop(key, None)
+            nd_cache.pop(key, None)
 
     point_cache = _load_point_cache()
     if isinstance(point_cache, dict):
@@ -672,86 +533,6 @@ def dual_ranking_by_slice(
         if ranking_map:
             ranking[constraint] = ranking_map
     return ranking
-
-
-def build_dual_series_data(
-    duals_grid: list[list[dict]],
-    gamma_values: np.ndarray,
-    n_values: np.ndarray,
-    gamma_idx: int,
-    n_idx: int,
-) -> dict:
-    gamma_len = len(gamma_values)
-    n_len = len(n_values)
-    series_meta: dict[str, tuple[str, str]] = {}
-    gamma_keys: set[str] = set()
-    n_keys: set[str] = set()
-
-    for i in range(gamma_len):
-        point = duals_grid[i][n_idx]
-        for constraint, values in point.items():
-            for dual_key in values.keys():
-                key = _dual_series_id(constraint, dual_key)
-                series_meta[key] = (constraint, dual_key)
-                gamma_keys.add(key)
-
-    for j in range(n_len):
-        point = duals_grid[gamma_idx][j]
-        for constraint, values in point.items():
-            for dual_key in values.keys():
-                key = _dual_series_id(constraint, dual_key)
-                series_meta[key] = (constraint, dual_key)
-                n_keys.add(key)
-
-    all_keys = gamma_keys | n_keys
-    gamma_series = {key: [None] * gamma_len for key in all_keys}
-    n_series = {key: [None] * n_len for key in all_keys}
-
-    for i in range(gamma_len):
-        point = duals_grid[i][n_idx]
-        for constraint, values in point.items():
-            for dual_key, value in values.items():
-                key = _dual_series_id(constraint, dual_key)
-                if key not in gamma_series:
-                    continue
-                if value is None or not np.isfinite(value):
-                    continue
-                gamma_series[key][i] = float(value)
-
-    for j in range(n_len):
-        point = duals_grid[gamma_idx][j]
-        for constraint, values in point.items():
-            for dual_key, value in values.items():
-                key = _dual_series_id(constraint, dual_key)
-                if key not in n_series:
-                    continue
-                if value is None or not np.isfinite(value):
-                    continue
-                n_series[key][j] = float(value)
-
-    series_data = {}
-    gamma_list = [float(value) for value in gamma_values]
-    n_list = [float(value) for value in n_values]
-    for key in all_keys:
-        constraint, dual_key = series_meta.get(key, ("", ""))
-        gamma_dual = gamma_series[key]
-        n_dual = n_series[key]
-        gamma_values_clean = [value for value in gamma_dual if value is not None and np.isfinite(value)]
-        n_values_clean = [value for value in n_dual if value is not None and np.isfinite(value)]
-        all_zero_gamma = bool(gamma_values_clean) and all(abs(value) <= 1e-12 for value in gamma_values_clean)
-        all_zero_n = bool(n_values_clean) and all(abs(value) <= 1e-12 for value in n_values_clean)
-        series_data[key] = {
-            "constraint": constraint,
-            "dual_key": dual_key,
-            "label": f"{constraint} | {dual_key}",
-            "gamma_values": gamma_list,
-            "gamma_dual": gamma_dual,
-            "n_values": n_list,
-            "n_dual": n_dual,
-            "all_zero_gamma": all_zero_gamma,
-            "all_zero_n": all_zero_n,
-        }
-    return series_data
 
 
 def build_dual_section_html(
