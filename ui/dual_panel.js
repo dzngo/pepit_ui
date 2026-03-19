@@ -971,6 +971,14 @@ export default function(component) {
     });
   }
 
+  function resizeAllPlots() {
+    if (!window.Plotly || !window.Plotly.Plots || typeof window.Plotly.Plots.resize !== 'function') return;
+    root.querySelectorAll('.dual-plot-chart').forEach((plotDiv) => {
+      if (!plotDiv || !plotDiv.data) return;
+      window.Plotly.Plots.resize(plotDiv);
+    });
+  }
+
   function clearDualPlots() {
     dualParams.forEach((param) => {
       const grid = root.querySelector(`#dual-plot-${sanitizeId(param)}`);
@@ -1399,6 +1407,7 @@ export default function(component) {
         collapsed ? 'Expand recompute runs legend' : 'Collapse recompute runs legend'
       );
       writeLegendCollapsed(collapsed);
+      requestAnimationFrame(() => requestAnimationFrame(resizeAllPlots));
     });
   }
 
