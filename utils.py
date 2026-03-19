@@ -4,7 +4,7 @@ import os
 import pickle
 import random
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from decimal import ROUND_HALF_UP, Decimal
 from itertools import product
 from math import isfinite
@@ -17,7 +17,7 @@ import sympy as sp
 
 from algorithm.algorithm_custom import ALGORITHMS
 from algorithm.runtime import run_algorithm
-from algorithm.types import HyperparameterSpec
+from algorithm.types import AlgorithmEvaluationError, HyperparameterSpec
 
 
 def slider_for_param(
@@ -169,6 +169,35 @@ def _value_for_spec(spec: HyperparameterSpec, value: float) -> object:
     return float(value)
 
 
+def _compute_point_process(
+    algo_key: str,
+    function_config: Dict[str, Dict[str, object]],
+    algo_params: Dict[str, object],
+    active_dual_series_ids: tuple[str, ...],
+) -> tuple[float, dict, str | None, bool]:
+    spec = ALGORITHMS[algo_key]
+    try:
+        raw = run_algorithm(
+            algo_spec=spec,
+            function_config=function_config,
+            algo_params=algo_params,
+            active_dual_series_ids=set(active_dual_series_ids),
+        )
+        if isinstance(raw, tuple) and len(raw) == 2:
+            tau_raw, duals = raw
+        else:
+            tau_raw, duals = raw, {}
+        tau_value = float(np.asarray(tau_raw).reshape(-1)[0])
+        return tau_value, duals or {}, None, True
+    except AlgorithmEvaluationError as exc:
+        message = f"{spec.name}: {exc}"
+        return np.nan, {}, message, True
+    except Exception as exc:
+        message = f"{spec.name}: unexpected error - {exc}"
+        # Preserve behavior: unexpected errors are not cached.
+        return np.nan, {}, message, False
+
+
 def compute(
     algo_key: str,
     function_config: Dict[str, Dict[str, object]],
@@ -256,56 +285,58 @@ def compute(
         status_placeholder = st.empty()
         start = time.perf_counter()
         update_every = max(total // 100, 1)
-        active_dual_series_ids = set(selected_dual_series_ids or ())
+        active_dual_series_ids = tuple(selected_dual_series_ids or ())
 
-        def _compute_point(
+        def _apply_point_result(
             idx_tuple: tuple[int, ...],
-            algo_params: Dict[str, object],
             point_key: Tuple,
-        ) -> tuple[tuple[int, ...], Tuple, float, dict, str | None, bool]:
-            # try:
-            raw = run_algorithm(
-                algo_spec=spec,
-                function_config=function_config,
-                algo_params=algo_params,
-                active_dual_series_ids=active_dual_series_ids,
-            )
-            if isinstance(raw, tuple) and len(raw) == 2:
-                tau_raw, duals = raw
-            else:
-                tau_raw, duals = raw, {}
-            tau_value = float(np.asarray(tau_raw).reshape(-1)[0])
-            return idx_tuple, point_key, tau_value, duals or {}, None, True
-
-        # except AlgorithmEvaluationError as exc:
-        #     message = f"{spec.name}: {exc}"
-        #     return idx_tuple, point_key, np.nan, {}, message, True
-        # except Exception as exc:
-        #     message = f"{spec.name}: unexpected error - {exc}"
-        #     # Preserve previous behavior: do not cache unexpected errors.
-        #     return idx_tuple, point_key, np.nan, {}, message, False
+            tau_value: float,
+            duals: dict,
+            warning_message: str | None,
+            should_cache: bool,
+        ) -> None:
+            nonlocal completed
+            tau_nd[idx_tuple] = tau_value
+            duals_nd[idx_tuple] = duals
+            if warning_message:
+                warnings.add(warning_message)
+            if should_cache:
+                point_cache[point_key] = (tau_value, warning_message, duals)
+            completed += 1
+            if completed % update_every == 0 or completed == total:
+                fraction = completed / total
+                elapsed = time.perf_counter() - start
+                eta = (elapsed / fraction) - elapsed if fraction > 0 else 0.0
+                progress_bar.progress(fraction)
+                status_placeholder.write(f"Computing grid… {completed}/{total} (eta {eta:.1f}s)")
 
         max_workers = min(total, max(1, min(8, os.cpu_count() or 1)))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(_compute_point, idx_tuple, algo_params, point_key)
-                for idx_tuple, algo_params, point_key in missing
-            ]
-            for future in as_completed(futures):
-                idx_tuple, point_key, tau_value, duals, warning_message, should_cache = future.result()
-                tau_nd[idx_tuple] = tau_value
-                duals_nd[idx_tuple] = duals
-                if warning_message:
-                    warnings.add(warning_message)
-                if should_cache:
-                    point_cache[point_key] = (tau_value, warning_message, duals)
-                completed += 1
-                if completed % update_every == 0 or completed == total:
-                    fraction = completed / total
-                    elapsed = time.perf_counter() - start
-                    eta = (elapsed / fraction) - elapsed if fraction > 0 else 0.0
-                    progress_bar.progress(fraction)
-                    status_placeholder.write(f"Computing grid… {completed}/{total} (eta {eta:.1f}s)")
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                future_meta = {
+                    executor.submit(
+                        _compute_point_process,
+                        algo_key,
+                        function_config,
+                        algo_params,
+                        active_dual_series_ids,
+                    ): (idx_tuple, point_key)
+                    for idx_tuple, algo_params, point_key in missing
+                }
+                for future in as_completed(future_meta):
+                    idx_tuple, point_key = future_meta[future]
+                    tau_value, duals, warning_message, should_cache = future.result()
+                    _apply_point_result(idx_tuple, point_key, tau_value, duals, warning_message, should_cache)
+        except Exception as pool_exc:
+            warnings.add(f"{spec.name}: process parallelism unavailable; falling back to sequential ({pool_exc})")
+            for idx_tuple, algo_params, point_key in missing:
+                tau_value, duals, warning_message, should_cache = _compute_point_process(
+                    algo_key,
+                    function_config,
+                    algo_params,
+                    active_dual_series_ids,
+                )
+                _apply_point_result(idx_tuple, point_key, tau_value, duals, warning_message, should_cache)
 
         progress_bar.empty()
         status_placeholder.empty()
