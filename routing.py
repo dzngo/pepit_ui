@@ -1,5 +1,6 @@
 # routing.py
 import re
+from math import prod
 from pathlib import Path
 
 import pandas as pd
@@ -652,6 +653,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             },
             "rerun_nan_caches": bool(st.session_state.get("rerun_nan_caches", False)),
         }
+        st.session_state.pop(_loading_progress_key(algo_key), None)
         st.session_state["ui_phase"] = "loading"
         st.rerun()
 
@@ -659,6 +661,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
 def render_loading_phase(algo_key: str, spec):
     pending = st.session_state.get("pending_settings")
     if not pending or pending["algo_key"] != algo_key:
+        st.session_state.pop(_loading_progress_key(algo_key), None)
         st.session_state["ui_phase"] = "config"
         st.rerun()
 
@@ -686,36 +689,71 @@ def render_loading_phase(algo_key: str, spec):
             else:
                 st.markdown("*params*: `{}`")
 
-    result = compute(
-        algo_key,
-        pending["function_config"],
-        hyperparameter_specs,
-        show_progress=True,
-        rerun_nan_cache=bool(pending.get("rerun_nan_caches", False)),
-    )
-    if result is None:
-        st.error("Unable to compute tau grid.")
-        st.session_state["ui_phase"] = "config"
-        return
+    progress_key = _loading_progress_key(algo_key)
+    # Keep batches small enough so the fragment remains responsive to "Interrupt".
+    batch_size = 24
+    total_estimate = prod(len(discrete_values(hp)) for hp in hyperparameter_specs) if hyperparameter_specs else 0
 
-    st.session_state["active_settings"] = pending
-    st.session_state["pending_settings"] = None
-    st.session_state["ui_phase"] = "results"
-    st.session_state[f"dual_selection_{algo_key}"] = {}
-    st.session_state[_runs_key(algo_key)] = []
-    st.session_state[_run_counter_key(algo_key)] = 0
-    st.session_state.pop(_last_recompute_event_key(algo_key), None)
-    st.session_state.pop(_last_cursor_event_key(algo_key), None)
-    st.session_state.pop(_last_metric_event_key(algo_key), None)
-    st.session_state.pop(_last_remove_event_key(algo_key), None)
-    st.session_state[f"dual_selected_{algo_key}"] = []
-    cursor_indices = _default_cursor_indices(hyperparameter_specs)
-    local_cursor_indices_by_axis = _default_local_cursor_indices_by_axis(hyperparameter_specs, cursor_indices)
-    patterns_by_param = {hp.name: "" for hp in hyperparameter_specs}
-    st.session_state[_cursor_indices_key(algo_key)] = cursor_indices
-    st.session_state[_local_cursor_indices_by_axis_key(algo_key)] = local_cursor_indices_by_axis
-    st.session_state[_patterns_by_param_key(algo_key)] = patterns_by_param
-    st.rerun()
+    # Fragment reruns independently, so loading UI/progress can update without full-page rerun churn.
+    @st.fragment(run_every=0.25)
+    def _loading_fragment() -> None:
+        current_pending = st.session_state.get("pending_settings")
+        if not current_pending or current_pending.get("algo_key") != algo_key:
+            return
+
+        controls_col, progress_col = st.columns([1, 3])
+        with controls_col:
+            if st.button("Interrupt", key=f"btn-interrupt-loading-{algo_key}"):
+                st.session_state.pop(progress_key, None)
+                st.session_state["pending_settings"] = None
+                st.session_state["ui_phase"] = "config"
+                st.rerun()
+
+        # Render progress from the previous batch before computing the next one.
+        progress_state = st.session_state.get(progress_key, {})
+        done = int(progress_state.get("done", 0))
+        total = int(progress_state.get("total", total_estimate))
+        if total > 0:
+            fraction = min(max(done / total, 0.0), 1.0)
+            with progress_col:
+                st.progress(fraction)
+                st.caption(f"Computing grid… {done}/{total}")
+
+        result = compute(
+            algo_key,
+            current_pending["function_config"],
+            hyperparameter_specs,
+            show_progress=False,
+            rerun_nan_cache=bool(current_pending.get("rerun_nan_caches", False)),
+            # Process one batch per fragment tick; return None while work remains.
+            batch_size=batch_size,
+            progress_state_key=progress_key,
+        )
+
+        if result is None:
+            return
+
+        st.session_state.pop(progress_key, None)
+        st.session_state["active_settings"] = current_pending
+        st.session_state["pending_settings"] = None
+        st.session_state["ui_phase"] = "results"
+        st.session_state[f"dual_selection_{algo_key}"] = {}
+        st.session_state[_runs_key(algo_key)] = []
+        st.session_state[_run_counter_key(algo_key)] = 0
+        st.session_state.pop(_last_recompute_event_key(algo_key), None)
+        st.session_state.pop(_last_cursor_event_key(algo_key), None)
+        st.session_state.pop(_last_metric_event_key(algo_key), None)
+        st.session_state.pop(_last_remove_event_key(algo_key), None)
+        st.session_state[f"dual_selected_{algo_key}"] = []
+        cursor_indices = _default_cursor_indices(hyperparameter_specs)
+        local_cursor_indices_by_axis = _default_local_cursor_indices_by_axis(hyperparameter_specs, cursor_indices)
+        patterns_by_param = {hp.name: "" for hp in hyperparameter_specs}
+        st.session_state[_cursor_indices_key(algo_key)] = cursor_indices
+        st.session_state[_local_cursor_indices_by_axis_key(algo_key)] = local_cursor_indices_by_axis
+        st.session_state[_patterns_by_param_key(algo_key)] = patterns_by_param
+        st.rerun()
+
+    _loading_fragment()
 
 
 def render_results_phase(algo_key: str, spec):
@@ -1088,6 +1126,10 @@ def _last_metric_event_key(algo_key: str) -> str:
 
 def _last_remove_event_key(algo_key: str) -> str:
     return f"remove_run_event_{algo_key}"
+
+
+def _loading_progress_key(algo_key: str) -> str:
+    return f"loading_progress_{algo_key}"
 
 
 def render_dual_values_panel(

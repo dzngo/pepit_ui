@@ -32,15 +32,17 @@ def main():
         reset_for_algorithm_change(algorithm_key)
 
     phase = st.session_state["ui_phase"]
-    if phase == "config":
-        render_config_phase(algorithm_key, spec)
-    elif phase == "loading":
-        render_loading_phase(algorithm_key, spec)
-    elif phase == "results":
-        render_results_phase(algorithm_key, spec)
-    else:
-        st.session_state["ui_phase"] = "config"
-        st.rerun()
+    phase_slot = st.empty()
+    with phase_slot.container():
+        if phase == "config":
+            render_config_phase(algorithm_key, spec)
+        elif phase == "loading":
+            render_loading_phase(algorithm_key, spec)
+        elif phase == "results":
+            render_results_phase(algorithm_key, spec)
+        else:
+            st.session_state["ui_phase"] = "config"
+            st.rerun()
 
 
 if __name__ == "__main__":

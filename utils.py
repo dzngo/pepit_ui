@@ -178,6 +178,8 @@ def compute(
     show_progress: bool,
     rerun_nan_cache: bool = False,
     selected_dual_series_ids: tuple[str, ...] | None = None,
+    batch_size: int | None = None,
+    progress_state_key: str | None = None,
 ):
     nd_cache = st.session_state.setdefault("tau_grid_cache_nd", {})
     nd_key = (
@@ -247,14 +249,29 @@ def compute(
         if cached_warning:
             warnings.add(cached_warning)
 
-    if missing and not show_progress:
+    total_points = int(np.prod(shape)) if shape else 0
+    resolved_points = total_points - len(missing)
+    if progress_state_key:
+        # Expose progress so loading UI can render it between incremental compute calls.
+        st.session_state[progress_state_key] = {
+            "done": int(resolved_points),
+            "total": int(total_points),
+            "remaining": int(len(missing)),
+        }
+
+    if missing and not show_progress and batch_size is None:
         return None
 
     if missing:
-        total = max(len(missing), 1)
+        work_items = missing
+        if batch_size is not None:
+            # Batch mode: compute only a slice now and return None if there is remaining work.
+            work_items = missing[: max(1, int(batch_size))]
+
+        total = max(len(work_items), 1)
         completed = 0
-        progress_bar = st.progress(0.0)
-        status_placeholder = st.empty()
+        progress_bar = st.progress(0.0) if show_progress and batch_size is None else None
+        status_placeholder = st.empty() if show_progress and batch_size is None else None
         start = time.perf_counter()
         update_every = max(total // 100, 1)
         active_dual_series_ids = tuple(selected_dual_series_ids or ())
@@ -279,8 +296,10 @@ def compute(
                 fraction = completed / total
                 elapsed = time.perf_counter() - start
                 eta = (elapsed / fraction) - elapsed if fraction > 0 else 0.0
-                progress_bar.progress(fraction)
-                status_placeholder.write(f"Computing grid… {completed}/{total} (eta {eta:.1f}s)")
+                if progress_bar is not None:
+                    progress_bar.progress(fraction)
+                if status_placeholder is not None:
+                    status_placeholder.write(f"Computing grid… {completed}/{total} (eta {eta:.1f}s)")
 
         max_workers = min(total, max(1, min(8, os.cpu_count() or 1)))
         mp_context = None
@@ -297,7 +316,7 @@ def compute(
                         algo_params,
                         active_dual_series_ids,
                     ): (idx_tuple, point_key)
-                    for idx_tuple, algo_params, point_key in missing
+                    for idx_tuple, algo_params, point_key in work_items
                 }
                 for future in as_completed(future_meta):
                     idx_tuple, point_key = future_meta[future]
@@ -305,7 +324,7 @@ def compute(
                     _apply_point_result(idx_tuple, point_key, tau_value, duals, warning_message, should_cache)
         except Exception as pool_exc:
             warnings.add(f"{spec.name}: process parallelism unavailable; falling back to sequential ({pool_exc})")
-            for idx_tuple, algo_params, point_key in missing:
+            for idx_tuple, algo_params, point_key in work_items:
                 tau_value, duals, warning_message, should_cache = compute_point_process(
                     algo_key,
                     function_config,
@@ -314,9 +333,23 @@ def compute(
                 )
                 _apply_point_result(idx_tuple, point_key, tau_value, duals, warning_message, should_cache)
 
-        progress_bar.empty()
-        status_placeholder.empty()
+        if progress_bar is not None:
+            progress_bar.empty()
+        if status_placeholder is not None:
+            status_placeholder.empty()
         _save_point_cache(point_cache)
+
+        remaining_after = len(missing) - len(work_items)
+        done_after = resolved_points + len(work_items)
+        if progress_state_key:
+            st.session_state[progress_state_key] = {
+                "done": int(done_after),
+                "total": int(total_points),
+                "remaining": int(max(remaining_after, 0)),
+            }
+        if batch_size is not None and remaining_after > 0:
+            # Signal caller to schedule the next batch.
+            return None
 
     nd_cache[nd_key] = (param_values, tau_nd, tuple(sorted(warnings)), duals_nd)
     return nd_cache[nd_key]
