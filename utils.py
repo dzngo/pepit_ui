@@ -1,5 +1,6 @@
 # utils.py
 import html
+import multiprocessing as mp
 import os
 import pickle
 import random
@@ -16,8 +17,8 @@ import streamlit as st
 import sympy as sp
 
 from algorithm.algorithm_custom import ALGORITHMS
-from algorithm.runtime import run_algorithm
-from algorithm.types import AlgorithmEvaluationError, HyperparameterSpec
+from algorithm.runtime import compute_point_process
+from algorithm.types import HyperparameterSpec
 
 
 def slider_for_param(
@@ -169,35 +170,6 @@ def _value_for_spec(spec: HyperparameterSpec, value: float) -> object:
     return float(value)
 
 
-def _compute_point_process(
-    algo_key: str,
-    function_config: Dict[str, Dict[str, object]],
-    algo_params: Dict[str, object],
-    active_dual_series_ids: tuple[str, ...],
-) -> tuple[float, dict, str | None, bool]:
-    spec = ALGORITHMS[algo_key]
-    try:
-        raw = run_algorithm(
-            algo_spec=spec,
-            function_config=function_config,
-            algo_params=algo_params,
-            active_dual_series_ids=set(active_dual_series_ids),
-        )
-        if isinstance(raw, tuple) and len(raw) == 2:
-            tau_raw, duals = raw
-        else:
-            tau_raw, duals = raw, {}
-        tau_value = float(np.asarray(tau_raw).reshape(-1)[0])
-        return tau_value, duals or {}, None, True
-    except AlgorithmEvaluationError as exc:
-        message = f"{spec.name}: {exc}"
-        return np.nan, {}, message, True
-    except Exception as exc:
-        message = f"{spec.name}: unexpected error - {exc}"
-        # Preserve behavior: unexpected errors are not cached.
-        return np.nan, {}, message, False
-
-
 def compute(
     algo_key: str,
     function_config: Dict[str, Dict[str, object]],
@@ -311,11 +283,15 @@ def compute(
                 status_placeholder.write(f"Computing grid… {completed}/{total} (eta {eta:.1f}s)")
 
         max_workers = min(total, max(1, min(8, os.cpu_count() or 1)))
+        mp_context = None
+        if "fork" in mp.get_all_start_methods():
+            # Avoid spawn re-importing Streamlit app modules in workers.
+            mp_context = mp.get_context("fork")
         try:
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as executor:
                 future_meta = {
                     executor.submit(
-                        _compute_point_process,
+                        compute_point_process,
                         algo_key,
                         function_config,
                         algo_params,
@@ -330,7 +306,7 @@ def compute(
         except Exception as pool_exc:
             warnings.add(f"{spec.name}: process parallelism unavailable; falling back to sequential ({pool_exc})")
             for idx_tuple, algo_params, point_key in missing:
-                tau_value, duals, warning_message, should_cache = _compute_point_process(
+                tau_value, duals, warning_message, should_cache = compute_point_process(
                     algo_key,
                     function_config,
                     algo_params,

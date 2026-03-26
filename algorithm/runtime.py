@@ -1,8 +1,10 @@
 import re
 from typing import Dict, Tuple
 
+import numpy as np
 from PEPit import PEP, Point
 
+from .algorithm_custom import ALGORITHMS
 from .function_registry import FUNCTIONS
 from .types import AlgorithmEvaluationError, AlgorithmSpec
 
@@ -96,3 +98,32 @@ def run_algorithm(
     duals.update(_extract_duals(problem))
 
     return float(tau), duals
+
+
+def compute_point_process(
+    algo_key: str,
+    function_config: Dict[str, Dict[str, object]],
+    algo_params: Dict[str, object],
+    active_dual_series_ids: tuple[str, ...],
+) -> tuple[float, dict, str | None, bool]:
+    spec = ALGORITHMS[algo_key]
+    try:
+        raw = run_algorithm(
+            algo_spec=spec,
+            function_config=function_config,
+            algo_params=algo_params,
+            active_dual_series_ids=set(active_dual_series_ids),
+        )
+        if isinstance(raw, tuple) and len(raw) == 2:
+            tau_raw, duals = raw
+        else:
+            tau_raw, duals = raw, {}
+        tau_value = float(np.asarray(tau_raw).reshape(-1)[0])
+        return tau_value, duals or {}, None, True
+    except AlgorithmEvaluationError as exc:
+        message = f"{spec.name}: {exc}"
+        return np.nan, {}, message, True
+    except Exception as exc:
+        message = f"{spec.name}: unexpected error - {exc}"
+        # Preserve behavior: unexpected errors are not cached.
+        return np.nan, {}, message, False
