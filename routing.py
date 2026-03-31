@@ -589,41 +589,34 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             if not function_names:
                 st.error("No function types are registered.")
             else:
-                controls_left, controls_right = st.columns([1, 1])
-                with controls_left:
-                    if st.button("Add function", key=f"btn-add-function-{algo_key}"):
-                        function_rows.append(
-                            {
-                                "id": _next_function_row_id(algo_key),
-                                "name": _suggest_new_function_name(function_rows),
-                                "function_key": default_function_key,
-                                "function_params": {},
-                            }
-                        )
-                        st.rerun()
-                with controls_right:
-                    st.caption("Each row defines `funcs[name]` and its function class.")
+                st.caption("Each block defines `funcs[name]` and its function class.")
 
                 remove_row_id: str | None = None
                 for idx, row in enumerate(function_rows, start=1):
                     row_id = str(row.get("id") or _next_function_row_id(algo_key))
                     row["id"] = row_id
                     with st.container(border=True):
-                        name_value = st.text_input(
-                            "name",
-                            value=str(row.get("name", "")),
-                            key=f"{_function_row_id_key(algo_key)}name-{row_id}",
-                        )
-
-                        selected_function = str(row.get("function_key") or "")
-                        if selected_function not in function_names:
-                            selected_function = default_function_key
-                        selected_function = st.selectbox(
-                            "function type",
-                            options=function_names,
-                            index=function_names.index(selected_function) if selected_function in function_names else 0,
-                            key=f"{_function_row_id_key(algo_key)}type-{row_id}",
-                        )
+                        name_col, function_type_col = st.columns([1, 3])
+                        with name_col:
+                            name_value = st.text_input(
+                                "name",
+                                value=str(row.get("name", "")),
+                                key=f"{_function_row_id_key(algo_key)}name-{row_id}",
+                            )
+                        with function_type_col:
+                            selected_function = str(row.get("function_key") or "")
+                            if selected_function not in function_names:
+                                selected_function = default_function_key
+                            selected_function = st.selectbox(
+                                "function type",
+                                options=function_names,
+                                index=(
+                                    function_names.index(selected_function)
+                                    if selected_function in function_names
+                                    else 0
+                                ),
+                                key=f"{_function_row_id_key(algo_key)}type-{row_id}",
+                            )
 
                         row["name"] = name_value.strip()
                         row["function_key"] = selected_function
@@ -738,6 +731,17 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                     updated_rows = [row for row in function_rows if str(row.get("id")) != remove_row_id]
                     st.session_state["function_rows_store"][algo_key] = updated_rows
                     st.rerun()
+
+            if st.button("Add function", key=f"btn-add-function-{algo_key}"):
+                function_rows.append(
+                    {
+                        "id": _next_function_row_id(algo_key),
+                        "name": _suggest_new_function_name(function_rows),
+                        "function_key": default_function_key,
+                        "function_params": {},
+                    }
+                )
+                st.rerun()
 
             function_row_errors = _validate_function_rows(function_rows)
             for error in function_row_errors:
