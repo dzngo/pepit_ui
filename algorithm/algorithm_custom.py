@@ -6,9 +6,8 @@ from pathlib import Path
 from typing import Callable, Dict
 
 import numpy as np
-from PEPit import PEP, Point
+from PEPit import PEP, Point, primitive_steps
 from PEPit.function import Function
-from PEPit.primitive_steps import epsilon_subgradient_step, proximal_step
 
 from algorithm.algorithm_templates import BASE_ALGORITHMS
 from algorithm.types import AlgorithmSpec, HyperparameterSpec
@@ -16,17 +15,33 @@ from algorithm.types import AlgorithmSpec, HyperparameterSpec
 CUSTOM_ALGORITHMS_PATH = Path(__file__).resolve().parent.parent / "custom_algorithms.json"
 
 
+def _primitive_steps_namespace() -> dict[str, object]:
+    exported_names = getattr(primitive_steps, "__all__", None)
+    if exported_names is None:
+        exported_names = [name for name in dir(primitive_steps) if not name.startswith("_")]
+    out: dict[str, object] = {}
+    for name in exported_names:
+        attr = getattr(primitive_steps, name, None)
+        if callable(attr):
+            out[name] = attr
+    return out
+
+
 def _compile_steps(steps_code: str) -> Callable[[PEP, Dict[str, object], Dict[str, float]], dict]:
     namespace: dict[str, object] = {
         "PEP": PEP,
         "Point": Point,
-        "proximal_step": proximal_step,
-        "epsilon_subgradient_step": epsilon_subgradient_step,
         "sqrt": sqrt,
         "np": np,
         "Dict": Dict,
         "Function": Function,
     }
+    primitive_step_namespace = _primitive_steps_namespace()
+    collisions = set(namespace).intersection(primitive_step_namespace)
+    if collisions:
+        names = ", ".join(sorted(collisions))
+        raise ValueError(f"Primitive step namespace collision: {names}")
+    namespace.update(primitive_step_namespace)
     exec(steps_code, namespace)
     steps = namespace.get("customized_algorithm")
     if not callable(steps):

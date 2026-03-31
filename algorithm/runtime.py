@@ -40,7 +40,7 @@ def _constraint_series_id(constraint_name: str) -> str | None:
 def run_algorithm(
     *,
     algo_spec: AlgorithmSpec,
-    function_config: Dict[str, Dict[str, float]],
+    function_config: Dict[str, Dict[str, object]],
     algo_params: Dict[str, float],
     wrapper: str = "cvxpy",
     solver: str | None = None,
@@ -77,7 +77,14 @@ def run_algorithm(
             else:
                 resolved_params[param.name] = raw_value
         func = problem.declare_function(function_spec.cls, **resolved_params)
-        funcs[slot_key] = func
+        alias_raw = config.get("alias")
+        alias = str(alias_raw).strip() if alias_raw is not None else ""
+        canonical_name = alias or slot_key
+        existing = funcs.get(canonical_name)
+        if existing is not None and existing is not func:
+            raise ValueError(f"Duplicate function alias in funcs dict: '{canonical_name}'")
+        # Strict replace: expose only the configured canonical name in funcs.
+        funcs[canonical_name] = func
 
     algo_spec.algo(problem, funcs, algo_params)
 

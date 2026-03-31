@@ -49,6 +49,7 @@ def init_session_state():
     st.session_state.setdefault("rerun_nan_caches", False)
     st.session_state.setdefault("function_store", {})
     st.session_state.setdefault("function_params_store", {})
+    st.session_state.setdefault("function_alias_store", {})
 
 
 def reset_for_algorithm_change(algo_key: str):
@@ -60,6 +61,7 @@ def reset_for_algorithm_change(algo_key: str):
 
 _HYPERPARAM_COLUMNS = ("name", "label", "value_type", "min", "max", "step", "default")
 _HYPERPARAM_RESERVED_NAMES = {"x", "pi", "e"}
+_FUNCTION_ALIAS_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _hyperparameter_rows_from_specs(specs: list[HyperparameterSpec]) -> list[dict]:
@@ -247,6 +249,43 @@ def _param_values_by_name(specs: list[HyperparameterSpec]) -> dict[str, list[flo
     return {hp.name: [float(v) for v in discrete_values(hp)] for hp in specs}
 
 
+def _validate_function_aliases(spec: AlgorithmSpec, alias_by_slot: dict[str, str]) -> list[str]:
+    errors: list[str] = []
+    seen: dict[str, str] = {}
+    for slot in spec.function_slots:
+        alias = str(alias_by_slot.get(slot.key, "")).strip()
+        if not alias:
+            errors.append(f"Function alias for slot '{slot.key}' is required.")
+            continue
+        if not _FUNCTION_ALIAS_PATTERN.fullmatch(alias):
+            errors.append(
+                f"Function alias '{alias}' for slot '{slot.key}' is invalid. Use letters, numbers, and '_' only."
+            )
+            continue
+        if alias in seen and seen[alias] != slot.key:
+            errors.append(f"Duplicate function alias '{alias}' for slots '{seen[alias]}' and '{slot.key}'.")
+            continue
+        seen[alias] = slot.key
+    return errors
+
+
+def _build_function_config(algo_key: str, spec: AlgorithmSpec) -> dict[str, dict[str, object]]:
+    function_store = st.session_state["function_store"]
+    function_params_store = st.session_state["function_params_store"]
+    function_alias_store = st.session_state["function_alias_store"]
+    algo_functions = function_store.setdefault(algo_key, {})
+    algo_function_params = function_params_store.setdefault(algo_key, {})
+    algo_function_aliases = function_alias_store.setdefault(algo_key, {})
+    function_config: dict[str, dict[str, object]] = {}
+    for slot in spec.function_slots:
+        function_config[slot.key] = {
+            "function_key": algo_functions.get(slot.key, spec.default_function_keys.get(slot.key)),
+            "function_params": dict(algo_function_params.get(slot.key, {})),
+            "alias": str(algo_function_aliases.get(slot.key, slot.key)).strip() or slot.key,
+        }
+    return function_config
+
+
 def _default_local_cursor_indices_by_axis(
     specs: list[HyperparameterSpec],
     cursor_indices: dict[str, int],
@@ -306,6 +345,8 @@ def _run_steps_smoke_test(
 ) -> str | None:
     if test_context["function_param_errors"]:
         return "; ".join(test_context["function_param_errors"])
+    if test_context.get("function_alias_errors"):
+        return "; ".join(test_context["function_alias_errors"])
     if test_context["runtime_param_errors"]:
         return "; ".join(test_context["runtime_param_errors"])
     try:
@@ -452,17 +493,27 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             st.write("Functions")
             function_store = st.session_state["function_store"]
             function_params_store = st.session_state["function_params_store"]
+            function_alias_store = st.session_state["function_alias_store"]
             algo_functions = function_store.setdefault(algo_key, {})
             algo_function_params = function_params_store.setdefault(algo_key, {})
+            algo_function_aliases = function_alias_store.setdefault(algo_key, {})
             function_param_errors: list[str] = []
             for slot in spec.function_slots:
+                alias_input = st.text_input(
+                    "name",
+                    value=str(algo_function_aliases.get(slot.key, slot.key)),
+                    key=f"function-alias-{algo_key}-{slot.key}",
+                    help="Name to use in customized code via funcs['...']",
+                )
+                algo_function_aliases[slot.key] = alias_input.strip()
+                display_name = str(algo_function_aliases.get(slot.key, "")).strip() or slot.key
                 default_function = spec.default_function_keys.get(slot.key)
                 selected_function = algo_functions.get(slot.key, default_function)
                 function_names = sorted(FUNCTIONS.keys())
                 if selected_function not in function_names:
                     selected_function = function_names[0]
                 selected_function = st.selectbox(
-                    f"{slot.key} function",
+                    "function type",
                     options=function_names,
                     index=function_names.index(selected_function) if selected_function in function_names else 0,
                     key=f"function-{algo_key}-{slot.key}",
@@ -475,14 +526,14 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                     {param.name: param.default for param in function_spec.parameters},
                 )
                 if not function_spec.parameters:
-                    st.caption(f"{slot.key} has no required parameters.")
+                    st.caption(f"{display_name} has no required parameters.")
                 else:
                     columns = st.columns(3)
                     for idx, param in enumerate(function_spec.parameters):
                         with columns[idx % 3]:
                             with st.container(border=True):
                                 input_key = f"function-param-{algo_key}-{slot.key}-{param.name}"
-                                param_context = f"{slot.key} ({function_spec.cls.__name__}), parameter {param.name}"
+                                param_context = f"{display_name} ({function_spec.cls.__name__}), parameter {param.name}"
                                 if param.param_type == "float":
                                     default_text = _float_text_default(slot_params.get(param.name, param.default))
                                     st.session_state.setdefault(input_key, default_text)
@@ -561,17 +612,14 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                     stale_params = set(slot_params) - {p.name for p in function_spec.parameters}
                     for key in stale_params:
                         slot_params.pop(key, None)
+            function_alias_errors = _validate_function_aliases(spec, algo_function_aliases)
+            for error in function_alias_errors:
+                st.error(error)
 
     with sections[0]:
         with st.container(border=True):
             st.write("Algorithm")
-            function_config = {
-                slot.key: {
-                    "function_key": st.session_state["function_store"][algo_key][slot.key],
-                    "function_params": dict(st.session_state["function_params_store"][algo_key][slot.key]),
-                }
-                for slot in spec.function_slots
-            }
+            function_config = _build_function_config(algo_key, spec)
             _render_steps_editor(
                 algo_key=algo_key,
                 spec=spec,
@@ -579,6 +627,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                 test_context={
                     "function_config": function_config,
                     "function_param_errors": list(function_param_errors),
+                    "function_alias_errors": list(function_alias_errors),
                     "runtime_param_errors": runtime_param_errors,
                     "hyperparameter_specs": list(hyperparameter_specs),
                 },
@@ -616,19 +665,16 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
         errors = list(hyperparameter_errors)
         errors.extend(runtime_param_errors)
         errors.extend(function_param_errors)
+        errors.extend(function_alias_errors)
         if errors:
             for error in errors:
                 st.error(error)
             return
+        function_config = _build_function_config(algo_key, spec)
         plot_test_context = {
-            "function_config": {
-                slot.key: {
-                    "function_key": st.session_state["function_store"][algo_key][slot.key],
-                    "function_params": dict(st.session_state["function_params_store"][algo_key][slot.key]),
-                }
-                for slot in spec.function_slots
-            },
+            "function_config": function_config,
             "function_param_errors": list(function_param_errors),
+            "function_alias_errors": list(function_alias_errors),
             "runtime_param_errors": runtime_param_errors,
             "hyperparameter_specs": list(hyperparameter_specs),
         }
@@ -644,13 +690,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
         st.session_state["pending_settings"] = {
             "algo_key": algo_key,
             "hyperparameter_specs": list(hyperparameter_specs),
-            "function_config": {
-                slot.key: {
-                    "function_key": st.session_state["function_store"][algo_key][slot.key],
-                    "function_params": dict(st.session_state["function_params_store"][algo_key][slot.key]),
-                }
-                for slot in spec.function_slots
-            },
+            "function_config": function_config,
             "rerun_nan_caches": bool(st.session_state.get("rerun_nan_caches", False)),
         }
         st.session_state.pop(_loading_progress_key(algo_key), None)
@@ -682,7 +722,8 @@ def render_loading_phase(algo_key: str, spec):
         st.code(_steps_source(spec), language="python")
         st.markdown("**Functions**")
         for slot_key, slot_config in sorted(pending["function_config"].items()):
-            st.markdown(f"{slot_key}: `{slot_config['function_key']}`")
+            alias = str(slot_config.get("alias", slot_key) or slot_key)
+            st.markdown(f"{alias}: `{slot_config['function_key']}`")
             if slot_config["function_params"]:
                 params_line = ", ".join(f"{name}={value}" for name, value in slot_config["function_params"].items())
                 st.markdown(f"*params*: {params_line}")
@@ -800,7 +841,8 @@ def render_results_phase(algo_key: str, spec):
         st.code(_steps_source(spec), language="python")
         st.markdown("**Functions**")
         for slot_key, slot_config in sorted(settings["function_config"].items()):
-            st.markdown(f"{slot_key}: `{slot_config['function_key']}`")
+            alias = str(slot_config.get("alias", slot_key) or slot_key)
+            st.markdown(f"{alias}: `{slot_config['function_key']}`")
             if slot_config["function_params"]:
                 params_line = ", ".join(f"{name}={value}" for name, value in slot_config["function_params"].items())
                 st.markdown(f"*params*: {params_line}")
