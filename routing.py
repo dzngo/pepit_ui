@@ -47,9 +47,8 @@ def init_session_state():
     st.session_state.setdefault("pending_settings", None)
     st.session_state.setdefault("active_settings", None)
     st.session_state.setdefault("rerun_nan_caches", False)
-    st.session_state.setdefault("function_store", {})
-    st.session_state.setdefault("function_params_store", {})
-    st.session_state.setdefault("function_alias_store", {})
+    st.session_state.setdefault("function_rows_store", {})
+    st.session_state.setdefault("function_row_counter_store", {})
 
 
 def reset_for_algorithm_change(algo_key: str):
@@ -61,7 +60,7 @@ def reset_for_algorithm_change(algo_key: str):
 
 _HYPERPARAM_COLUMNS = ("name", "label", "value_type", "min", "max", "step", "default")
 _HYPERPARAM_RESERVED_NAMES = {"x", "pi", "e"}
-_FUNCTION_ALIAS_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_FUNCTION_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _hyperparameter_rows_from_specs(specs: list[HyperparameterSpec]) -> list[dict]:
@@ -249,39 +248,117 @@ def _param_values_by_name(specs: list[HyperparameterSpec]) -> dict[str, list[flo
     return {hp.name: [float(v) for v in discrete_values(hp)] for hp in specs}
 
 
-def _validate_function_aliases(spec: AlgorithmSpec, alias_by_slot: dict[str, str]) -> list[str]:
-    errors: list[str] = []
-    seen: dict[str, str] = {}
+def _function_row_id_key(algo_key: str) -> str:
+    return f"function-row-{algo_key}-"
+
+
+def _next_function_row_id(algo_key: str) -> str:
+    counters = st.session_state["function_row_counter_store"]
+    next_id = int(counters.get(algo_key, 0)) + 1
+    counters[algo_key] = next_id
+    return f"r{next_id}"
+
+
+def _default_function_rows_from_spec(spec: AlgorithmSpec) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
     for slot in spec.function_slots:
-        alias = str(alias_by_slot.get(slot.key, "")).strip()
-        if not alias:
-            errors.append(f"Function alias for slot '{slot.key}' is required.")
-            continue
-        if not _FUNCTION_ALIAS_PATTERN.fullmatch(alias):
-            errors.append(
-                f"Function alias '{alias}' for slot '{slot.key}' is invalid. Use letters, numbers, and '_' only."
-            )
-            continue
-        if alias in seen and seen[alias] != slot.key:
-            errors.append(f"Duplicate function alias '{alias}' for slots '{seen[alias]}' and '{slot.key}'.")
-            continue
-        seen[alias] = slot.key
+        rows.append(
+            {
+                "id": f"slot-{slot.key}",
+                "name": slot.key,
+                "function_key": spec.default_function_keys.get(slot.key, ""),
+                "function_params": {},
+            }
+        )
+    return rows
+
+
+def _sanitize_function_rows(
+    algo_key: str, rows: list[dict[str, object]], spec: AlgorithmSpec
+) -> list[dict[str, object]]:
+    function_names = sorted(FUNCTIONS.keys())
+    fallback_function_key = function_names[0] if function_names else ""
+    normalized: list[dict[str, object]] = []
+    for idx, row in enumerate(rows):
+        row_id = str(row.get("id") or "").strip()
+        if not row_id:
+            row_id = _next_function_row_id(algo_key)
+        name = str(row.get("name") or "").strip()
+        if not name:
+            name = f"f{idx + 1}"
+        function_key = str(row.get("function_key") or "").strip()
+        if function_key not in FUNCTIONS:
+            function_key = fallback_function_key
+        function_params = row.get("function_params")
+        if not isinstance(function_params, dict):
+            function_params = {}
+        normalized.append(
+            {
+                "id": row_id,
+                "name": name,
+                "function_key": function_key,
+                "function_params": dict(function_params),
+            }
+        )
+
+    if not normalized:
+        normalized = _default_function_rows_from_spec(spec)
+        normalized = _sanitize_function_rows(algo_key, normalized, spec)
+    return normalized
+
+
+def _get_function_rows(algo_key: str, spec: AlgorithmSpec) -> list[dict[str, object]]:
+    rows_store = st.session_state["function_rows_store"]
+    if algo_key not in rows_store:
+        rows_store[algo_key] = _default_function_rows_from_spec(spec)
+    rows_store[algo_key] = _sanitize_function_rows(algo_key, list(rows_store.get(algo_key, [])), spec)
+    return rows_store[algo_key]
+
+
+def _suggest_new_function_name(rows: list[dict[str, object]]) -> str:
+    used = {str(row.get("name") or "").strip() for row in rows}
+    candidate = "f"
+    if candidate not in used:
+        return candidate
+    idx = 1
+    while True:
+        candidate = f"f{idx}"
+        if candidate not in used:
+            return candidate
+        idx += 1
+
+
+def _validate_function_rows(rows: list[dict[str, object]]) -> list[str]:
+    errors: list[str] = []
+    seen: set[str] = set()
+    for idx, row in enumerate(rows, start=1):
+        name = str(row.get("name") or "").strip()
+        function_key = str(row.get("function_key") or "").strip()
+        if not name:
+            errors.append(f"Function row {idx}: name is required.")
+        elif not _FUNCTION_NAME_PATTERN.fullmatch(name):
+            errors.append(f"Function row {idx}: invalid name '{name}'. Use letters, numbers, and '_' only.")
+        elif name in seen:
+            errors.append(f"Function row {idx}: duplicate name '{name}'.")
+        else:
+            seen.add(name)
+        if not function_key:
+            errors.append(f"Function row {idx}: function type is required.")
+        elif function_key not in FUNCTIONS:
+            errors.append(f"Function row {idx}: unknown function type '{function_key}'.")
     return errors
 
 
 def _build_function_config(algo_key: str, spec: AlgorithmSpec) -> dict[str, dict[str, object]]:
-    function_store = st.session_state["function_store"]
-    function_params_store = st.session_state["function_params_store"]
-    function_alias_store = st.session_state["function_alias_store"]
-    algo_functions = function_store.setdefault(algo_key, {})
-    algo_function_params = function_params_store.setdefault(algo_key, {})
-    algo_function_aliases = function_alias_store.setdefault(algo_key, {})
+    rows = _get_function_rows(algo_key, spec)
     function_config: dict[str, dict[str, object]] = {}
-    for slot in spec.function_slots:
-        function_config[slot.key] = {
-            "function_key": algo_functions.get(slot.key, spec.default_function_keys.get(slot.key)),
-            "function_params": dict(algo_function_params.get(slot.key, {})),
-            "alias": str(algo_function_aliases.get(slot.key, slot.key)).strip() or slot.key,
+    for row in rows:
+        row_id = str(row.get("id") or _next_function_row_id(algo_key))
+        name = str(row.get("name") or "").strip()
+        function_config[row_id] = {
+            "function_key": str(row.get("function_key") or "").strip(),
+            "function_params": dict(row.get("function_params") or {}),
+            "alias": name,
         }
     return function_config
 
@@ -345,8 +422,8 @@ def _run_steps_smoke_test(
 ) -> str | None:
     if test_context["function_param_errors"]:
         return "; ".join(test_context["function_param_errors"])
-    if test_context.get("function_alias_errors"):
-        return "; ".join(test_context["function_alias_errors"])
+    if test_context.get("function_row_errors"):
+        return "; ".join(test_context["function_row_errors"])
     if test_context["runtime_param_errors"]:
         return "; ".join(test_context["runtime_param_errors"])
     try:
@@ -446,6 +523,20 @@ def _render_steps_editor(
                         current_rows = hyperparameter_store.get(algo_key, [])
                         copied_rows = [dict(row) for row in current_rows]
                     hyperparameter_store[name] = copied_rows
+                # Preserve function configuration when switching to the newly
+                # saved custom algorithm key.
+                function_rows_store = st.session_state.get("function_rows_store", {})
+                if isinstance(function_rows_store, dict):
+                    source_rows = function_rows_store.get(algo_key, [])
+                    copied_function_rows: list[dict] = []
+                    for row in source_rows:
+                        copied_row = dict(row)
+                        copied_row["function_params"] = dict(row.get("function_params", {}))
+                        copied_function_rows.append(copied_row)
+                    function_rows_store[name] = copied_function_rows
+                function_row_counter_store = st.session_state.get("function_row_counter_store", {})
+                if isinstance(function_row_counter_store, dict):
+                    function_row_counter_store[name] = int(function_row_counter_store.get(algo_key, 0))
                 st.session_state[open_key] = False
                 st.session_state["pending_algorithm_select"] = name
                 st.session_state["selected_algorithm"] = None
@@ -491,129 +582,165 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             runtime_param_errors: list[str] = []
         with st.container(border=True):
             st.write("Functions")
-            function_store = st.session_state["function_store"]
-            function_params_store = st.session_state["function_params_store"]
-            function_alias_store = st.session_state["function_alias_store"]
-            algo_functions = function_store.setdefault(algo_key, {})
-            algo_function_params = function_params_store.setdefault(algo_key, {})
-            algo_function_aliases = function_alias_store.setdefault(algo_key, {})
+            function_rows = _get_function_rows(algo_key, spec)
+            function_names = sorted(FUNCTIONS.keys())
+            default_function_key = function_names[0] if function_names else ""
             function_param_errors: list[str] = []
-            for slot in spec.function_slots:
-                alias_input = st.text_input(
-                    "name",
-                    value=str(algo_function_aliases.get(slot.key, slot.key)),
-                    key=f"function-alias-{algo_key}-{slot.key}",
-                    help="Name to use in customized code via funcs['...']",
-                )
-                algo_function_aliases[slot.key] = alias_input.strip()
-                display_name = str(algo_function_aliases.get(slot.key, "")).strip() or slot.key
-                default_function = spec.default_function_keys.get(slot.key)
-                selected_function = algo_functions.get(slot.key, default_function)
-                function_names = sorted(FUNCTIONS.keys())
-                if selected_function not in function_names:
-                    selected_function = function_names[0]
-                selected_function = st.selectbox(
-                    "function type",
-                    options=function_names,
-                    index=function_names.index(selected_function) if selected_function in function_names else 0,
-                    key=f"function-{algo_key}-{slot.key}",
-                )
-                algo_functions[slot.key] = selected_function
+            if not function_names:
+                st.error("No function types are registered.")
+            else:
+                controls_left, controls_right = st.columns([1, 1])
+                with controls_left:
+                    if st.button("Add function", key=f"btn-add-function-{algo_key}"):
+                        function_rows.append(
+                            {
+                                "id": _next_function_row_id(algo_key),
+                                "name": _suggest_new_function_name(function_rows),
+                                "function_key": default_function_key,
+                                "function_params": {},
+                            }
+                        )
+                        st.rerun()
+                with controls_right:
+                    st.caption("Each row defines `funcs[name]` and its function class.")
 
-                function_spec = FUNCTIONS[selected_function]
-                slot_params = algo_function_params.setdefault(
-                    slot.key,
-                    {param.name: param.default for param in function_spec.parameters},
-                )
-                if not function_spec.parameters:
-                    st.caption(f"{display_name} has no required parameters.")
-                else:
-                    columns = st.columns(3)
-                    for idx, param in enumerate(function_spec.parameters):
-                        with columns[idx % 3]:
-                            with st.container(border=True):
-                                input_key = f"function-param-{algo_key}-{slot.key}-{param.name}"
-                                param_context = f"{display_name} ({function_spec.cls.__name__}), parameter {param.name}"
-                                if param.param_type == "float":
-                                    default_text = _float_text_default(slot_params.get(param.name, param.default))
-                                    st.session_state.setdefault(input_key, default_text)
-                                    raw_value = st.text_input(param.name, key=input_key)
-                                    parsed_value, error = _parse_float_input(raw_value)
-                                    if error:
-                                        function_param_errors.append(f"{param_context}: {error}")
-                                    else:
-                                        if param.required and parsed_value is None:
-                                            function_param_errors.append(f"{param_context}: value required.")
-                                        elif parsed_value is not None and parsed_value < 0:
-                                            function_param_errors.append(f"{param_context}: value must be >= 0.")
+                remove_row_id: str | None = None
+                for idx, row in enumerate(function_rows, start=1):
+                    row_id = str(row.get("id") or _next_function_row_id(algo_key))
+                    row["id"] = row_id
+                    with st.container(border=True):
+                        name_value = st.text_input(
+                            "name",
+                            value=str(row.get("name", "")),
+                            key=f"{_function_row_id_key(algo_key)}name-{row_id}",
+                        )
+
+                        selected_function = str(row.get("function_key") or "")
+                        if selected_function not in function_names:
+                            selected_function = default_function_key
+                        selected_function = st.selectbox(
+                            "function type",
+                            options=function_names,
+                            index=function_names.index(selected_function) if selected_function in function_names else 0,
+                            key=f"{_function_row_id_key(algo_key)}type-{row_id}",
+                        )
+
+                        row["name"] = name_value.strip()
+                        row["function_key"] = selected_function
+
+                        function_spec = FUNCTIONS[selected_function]
+                        slot_params = row.setdefault("function_params", {})
+                        if not isinstance(slot_params, dict):
+                            slot_params = {}
+                            row["function_params"] = slot_params
+                        display_name = row["name"] or f"row {idx}"
+                        if not function_spec.parameters:
+                            st.caption(f"{display_name} has no required parameters.")
+                        else:
+                            columns = st.columns(3)
+                            for param_idx, param in enumerate(function_spec.parameters):
+                                with columns[param_idx % 3]:
+                                    with st.container(border=True):
+                                        input_key = f"{_function_row_id_key(algo_key)}param-{row_id}-{param.name}"
+                                        param_context = (
+                                            f"{display_name} ({function_spec.cls.__name__}), parameter {param.name}"
+                                        )
+                                        if param.param_type == "float":
+                                            default_text = _float_text_default(
+                                                slot_params.get(param.name, param.default)
+                                            )
+                                            st.session_state.setdefault(input_key, default_text)
+                                            raw_value = st.text_input(param.name, key=input_key)
+                                            parsed_value, error = _parse_float_input(raw_value)
+                                            if error:
+                                                function_param_errors.append(f"{param_context}: {error}")
+                                            else:
+                                                if param.required and parsed_value is None:
+                                                    function_param_errors.append(f"{param_context}: value required.")
+                                                elif parsed_value is not None and parsed_value < 0:
+                                                    function_param_errors.append(
+                                                        f"{param_context}: value must be >= 0."
+                                                    )
+                                                else:
+                                                    slot_params[param.name] = parsed_value
+                                            if param.description:
+                                                st.caption(param.description)
+                                        elif param.param_type == "BlockPartition":
+                                            d_value = st.number_input(
+                                                f"{param.name} (d)",
+                                                min_value=0,
+                                                step=1,
+                                                value=int(slot_params.get(param.name, 1) or 1),
+                                                key=input_key,
+                                            )
+                                            slot_params[param.name] = int(d_value)
+                                            desc_parts = []
+                                            if param.description:
+                                                desc_parts.append(param.description)
+                                            desc_parts.append(
+                                                "Partition will be created via "
+                                                "`problem.declare_block_partition(d=...)`."
+                                            )
+                                            st.caption(" ".join(desc_parts))
+                                        elif param.param_type == "Point":
+                                            checked = st.checkbox(
+                                                param.name,
+                                                value=bool(slot_params.get(param.name, False)),
+                                                key=input_key,
+                                            )
+                                            slot_params[param.name] = bool(checked)
+                                            desc_parts = []
+                                            if param.description:
+                                                desc_parts.append(param.description)
+                                            desc_parts.append(
+                                                "When checked, a Point is created and passed as `center`."
+                                            )
+                                            st.caption(" ".join(desc_parts))
+                                        elif param.param_type == "list":
+                                            desc = param.description
+                                            if desc:
+                                                desc += " "
+                                            desc += "Enter list values separated by ','"
+                                            existing = slot_params.get(param.name, param.default)
+                                            if isinstance(existing, list):
+                                                default_text = ", ".join(str(value) for value in existing)
+                                            else:
+                                                default_text = ""
+                                            raw_value = st.text_input(
+                                                param.name,
+                                                value=st.session_state.get(input_key, default_text),
+                                                key=input_key,
+                                            )
+                                            parsed_list, error = _parse_float_list(raw_value)
+                                            if error:
+                                                function_param_errors.append(f"{param_context}: {error}")
+                                            else:
+                                                if param.required and not parsed_list:
+                                                    function_param_errors.append(f"{param_context}: value required.")
+                                                else:
+                                                    slot_params[param.name] = parsed_list
+                                            st.caption(desc)
                                         else:
-                                            slot_params[param.name] = parsed_value
-                                    if param.description:
-                                        st.caption(param.description)
-                                elif param.param_type == "BlockPartition":
-                                    d_value = st.number_input(
-                                        f"{param.name} (d)",
-                                        min_value=0,
-                                        step=1,
-                                        value=int(slot_params.get(param.name, 1) or 1),
-                                        key=input_key,
-                                    )
-                                    slot_params[param.name] = int(d_value)
-                                    desc_parts = []
-                                    if param.description:
-                                        desc_parts.append(param.description)
-                                    desc_parts.append(
-                                        "Partition will be created via `problem.declare_block_partition(d=...)`."
-                                    )
-                                    st.caption(" ".join(desc_parts))
-                                elif param.param_type == "Point":
-                                    checked = st.checkbox(
-                                        param.name,
-                                        value=bool(slot_params.get(param.name, False)),
-                                        key=input_key,
-                                    )
-                                    slot_params[param.name] = bool(checked)
-                                    desc_parts = []
-                                    if param.description:
-                                        desc_parts.append(param.description)
-                                    desc_parts.append("When checked, a Point is created and passed as `center`.")
-                                    st.caption(" ".join(desc_parts))
-                                elif param.param_type == "list":
-                                    desc = param.description
-                                    if desc:
-                                        desc += " "
-                                    desc += "Enter list values separated by ','"
-                                    existing = slot_params.get(param.name, param.default)
-                                    if isinstance(existing, list):
-                                        default_text = ", ".join(str(value) for value in existing)
-                                    else:
-                                        default_text = ""
-                                    raw_value = st.text_input(
-                                        param.name,
-                                        value=st.session_state.get(input_key, default_text),
-                                        key=input_key,
-                                    )
-                                    parsed_list, error = _parse_float_list(raw_value)
-                                    if error:
-                                        function_param_errors.append(f"{param_context}: {error}")
-                                    else:
-                                        if param.required and not parsed_list:
-                                            function_param_errors.append(f"{param_context}: value required.")
-                                        else:
-                                            slot_params[param.name] = parsed_list
-                                    st.caption(desc)
-                                else:
-                                    raw_value = st.text_input(
-                                        param.name,
-                                        value=str(slot_params.get(param.name, param.default) or ""),
-                                        key=input_key,
-                                    )
-                                    slot_params[param.name] = raw_value
-                    stale_params = set(slot_params) - {p.name for p in function_spec.parameters}
-                    for key in stale_params:
-                        slot_params.pop(key, None)
-            function_alias_errors = _validate_function_aliases(spec, algo_function_aliases)
-            for error in function_alias_errors:
+                                            raw_value = st.text_input(
+                                                param.name,
+                                                value=str(slot_params.get(param.name, param.default) or ""),
+                                                key=input_key,
+                                            )
+                                            slot_params[param.name] = raw_value
+                            stale_params = set(slot_params) - {p.name for p in function_spec.parameters}
+                            for key in stale_params:
+                                slot_params.pop(key, None)
+
+                        if st.button("Remove", key=f"{_function_row_id_key(algo_key)}remove-{row_id}"):
+                            remove_row_id = row_id
+
+                if remove_row_id is not None:
+                    updated_rows = [row for row in function_rows if str(row.get("id")) != remove_row_id]
+                    st.session_state["function_rows_store"][algo_key] = updated_rows
+                    st.rerun()
+
+            function_row_errors = _validate_function_rows(function_rows)
+            for error in function_row_errors:
                 st.error(error)
 
     with sections[0]:
@@ -627,7 +754,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                 test_context={
                     "function_config": function_config,
                     "function_param_errors": list(function_param_errors),
-                    "function_alias_errors": list(function_alias_errors),
+                    "function_row_errors": list(function_row_errors),
                     "runtime_param_errors": runtime_param_errors,
                     "hyperparameter_specs": list(hyperparameter_specs),
                 },
@@ -665,7 +792,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
         errors = list(hyperparameter_errors)
         errors.extend(runtime_param_errors)
         errors.extend(function_param_errors)
-        errors.extend(function_alias_errors)
+        errors.extend(function_row_errors)
         if errors:
             for error in errors:
                 st.error(error)
@@ -674,7 +801,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
         plot_test_context = {
             "function_config": function_config,
             "function_param_errors": list(function_param_errors),
-            "function_alias_errors": list(function_alias_errors),
+            "function_row_errors": list(function_row_errors),
             "runtime_param_errors": runtime_param_errors,
             "hyperparameter_specs": list(hyperparameter_specs),
         }
