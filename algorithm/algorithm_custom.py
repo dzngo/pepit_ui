@@ -26,6 +26,82 @@ def _save_custom_algorithms(payload: Dict[str, dict]) -> None:
     CUSTOM_ALGORITHMS_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True))
 
 
+def _copy_hyperparameters(specs: list[HyperparameterSpec]) -> list[HyperparameterSpec]:
+    return [
+        HyperparameterSpec(
+            name=hp.name,
+            label=hp.label,
+            min_value=hp.min_value,
+            max_value=hp.max_value,
+            default=hp.default,
+            step=hp.step,
+            value_type=hp.value_type,
+        )
+        for hp in specs
+    ]
+
+
+def _copy_function_rows(rows: list[dict]) -> list[dict]:
+    copied: list[dict] = []
+    for row in rows:
+        copied.append(
+            {
+                "id": str(row.get("id", "")),
+                "name": str(row.get("name", "")),
+                "function_key": str(row.get("function_key", "")),
+                "function_params": dict(row.get("function_params", {})),
+            }
+        )
+    return copied
+
+
+def _parse_hyperparameters_payload(
+    payload_value: object, fallback: list[HyperparameterSpec]
+) -> list[HyperparameterSpec]:
+    if not isinstance(payload_value, list):
+        return _copy_hyperparameters(fallback)
+    parsed: list[HyperparameterSpec] = []
+    for item in payload_value:
+        if not isinstance(item, dict):
+            continue
+        try:
+            parsed.append(
+                HyperparameterSpec(
+                    name=str(item["name"]),
+                    label=str(item.get("label", item["name"])),
+                    min_value=float(item["min_value"]),
+                    max_value=float(item["max_value"]),
+                    default=float(item["default"]),
+                    step=float(item["step"]),
+                    value_type=str(item.get("value_type", "float")),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return parsed or _copy_hyperparameters(fallback)
+
+
+def _parse_function_rows_payload(payload_value: object, fallback: list[dict]) -> list[dict]:
+    if not isinstance(payload_value, list):
+        return _copy_function_rows(fallback)
+    parsed: list[dict] = []
+    for item in payload_value:
+        if not isinstance(item, dict):
+            continue
+        function_params = item.get("function_params", {})
+        if not isinstance(function_params, dict):
+            function_params = {}
+        parsed.append(
+            {
+                "id": str(item.get("id", "")),
+                "name": str(item.get("name", "")),
+                "function_key": str(item.get("function_key", "")),
+                "function_params": dict(function_params),
+            }
+        )
+    return parsed or _copy_function_rows(fallback)
+
+
 def _custom_spec_from_payload(name: str, payload: dict) -> AlgorithmSpec | None:
     base_name = payload.get("base_algo")
     steps_code = payload.get("steps_code")
@@ -35,23 +111,19 @@ def _custom_spec_from_payload(name: str, payload: dict) -> AlgorithmSpec | None:
     if base_spec is None:
         return None
     steps = compile_algorithm_body(steps_code)
+    default_hyperparameters = _parse_hyperparameters_payload(
+        payload.get("default_hyperparameters"),
+        list(base_spec.default_hyperparameters),
+    )
+    default_function_rows = _parse_function_rows_payload(
+        payload.get("default_function_rows"),
+        list(base_spec.default_function_rows),
+    )
     return AlgorithmSpec(
         name=name,
         algo=steps,
-        function_slots=list(base_spec.function_slots),
-        default_function_keys=dict(base_spec.default_function_keys),
-        default_hyperparameters=[
-            HyperparameterSpec(
-                name=hp.name,
-                label=hp.label,
-                min_value=hp.min_value,
-                max_value=hp.max_value,
-                default=hp.default,
-                step=hp.step,
-                value_type=hp.value_type,
-            )
-            for hp in base_spec.default_hyperparameters
-        ],
+        default_hyperparameters=default_hyperparameters,
+        default_function_rows=default_function_rows,
     )
 
 
@@ -94,6 +166,8 @@ def register_custom_algorithm(
     name: str,
     steps_code: str,
     base_algo: str,
+    default_hyperparameters: list[HyperparameterSpec] | None = None,
+    default_function_rows: list[dict] | None = None,
 ) -> AlgorithmSpec:
     if name in ALGORITHMS:
         raise ValueError(f"Algorithm name '{name}' already exists.")
@@ -101,27 +175,42 @@ def register_custom_algorithm(
     if base_spec is None:
         raise ValueError(f"Base algorithm '{base_algo}' not found.")
     steps = compile_algorithm_body(steps_code)
+    effective_hyperparameters = _copy_hyperparameters(
+        default_hyperparameters if default_hyperparameters is not None else list(base_spec.default_hyperparameters)
+    )
+    effective_function_rows = _copy_function_rows(
+        default_function_rows if default_function_rows is not None else list(base_spec.default_function_rows)
+    )
     spec = AlgorithmSpec(
         name=name,
         algo=steps,
-        function_slots=list(base_spec.function_slots),
-        default_function_keys=dict(base_spec.default_function_keys),
-        default_hyperparameters=[
-            HyperparameterSpec(
-                name=hp.name,
-                label=hp.label,
-                min_value=hp.min_value,
-                max_value=hp.max_value,
-                default=hp.default,
-                step=hp.step,
-                value_type=hp.value_type,
-            )
-            for hp in base_spec.default_hyperparameters
-        ],
+        default_hyperparameters=effective_hyperparameters,
+        default_function_rows=effective_function_rows,
     )
     CUSTOM_ALGORITHMS[name] = {
         "steps_code": steps_code,
         "base_algo": base_algo,
+        "default_hyperparameters": [
+            {
+                "name": hp.name,
+                "label": hp.label,
+                "min_value": hp.min_value,
+                "max_value": hp.max_value,
+                "default": hp.default,
+                "step": hp.step,
+                "value_type": hp.value_type,
+            }
+            for hp in effective_hyperparameters
+        ],
+        "default_function_rows": [
+            {
+                "id": str(row.get("id", "")),
+                "name": str(row.get("name", "")),
+                "function_key": str(row.get("function_key", "")),
+                "function_params": dict(row.get("function_params", {})),
+            }
+            for row in effective_function_rows
+        ],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _save_custom_algorithms(CUSTOM_ALGORITHMS)

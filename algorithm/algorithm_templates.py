@@ -3,7 +3,6 @@ from typing import Dict
 from algorithm.algorithm_compiler import compile_algorithm_body
 from algorithm.types import (
     AlgorithmSpec,
-    FunctionSlot,
     HyperparameterSpec,
     default_gamma_n_hyperparameters,
 )
@@ -113,36 +112,39 @@ BASE_ALGORITHMS: Dict[str, AlgorithmSpec] = {
     "gradient_descent": AlgorithmSpec(
         name="gradient_descent",
         algo=compile_algorithm_body(BASE_ALGORITHM_BODIES["gradient_descent"]),
-        function_slots=[FunctionSlot(key="f")],
-        default_function_keys={"f": "SmoothConvexFunction"},
         default_hyperparameters=default_gamma_n_hyperparameters(),
+        default_function_rows=[
+            {"id": "slot-f", "name": "f", "function_key": "SmoothConvexFunction", "function_params": {}}
+        ],
     ),
     "subgradient_method": AlgorithmSpec(
         name="subgradient_method",
         algo=compile_algorithm_body(BASE_ALGORITHM_BODIES["subgradient_method"]),
-        function_slots=[FunctionSlot(key="f")],
-        default_function_keys={"f": "ConvexLipschitzFunction"},
         default_hyperparameters=default_gamma_n_hyperparameters(),
+        default_function_rows=[
+            {"id": "slot-f", "name": "f", "function_key": "ConvexLipschitzFunction", "function_params": {}}
+        ],
     ),
     "proximal_gradient": AlgorithmSpec(
         name="proximal_gradient",
         algo=compile_algorithm_body(BASE_ALGORITHM_BODIES["proximal_gradient"]),
-        function_slots=[FunctionSlot(key="f1"), FunctionSlot(key="f2")],
-        default_function_keys={"f1": "SmoothStronglyConvexFunction", "f2": "ConvexFunction"},
         default_hyperparameters=default_gamma_n_hyperparameters(),
+        default_function_rows=[
+            {"id": "slot-f1", "name": "f1", "function_key": "SmoothStronglyConvexFunction", "function_params": {}},
+            {"id": "slot-f2", "name": "f2", "function_key": "ConvexFunction", "function_params": {}},
+        ],
     ),
     "accelerated_proximal_point": AlgorithmSpec(
         name="accelerated_proximal_point",
         algo=compile_algorithm_body(BASE_ALGORITHM_BODIES["accelerated_proximal_point"]),
-        function_slots=[FunctionSlot(key="f")],
-        default_function_keys={"f": "SmoothStronglyConvexFunction"},
         default_hyperparameters=default_gamma_n_hyperparameters(),
+        default_function_rows=[
+            {"id": "slot-f", "name": "f", "function_key": "SmoothStronglyConvexFunction", "function_params": {}}
+        ],
     ),
     "epsilon_subgradient": AlgorithmSpec(
         name="epsilon_subgradient",
         algo=compile_algorithm_body(BASE_ALGORITHM_BODIES["epsilon_subgradient"]),
-        function_slots=[FunctionSlot(key="f")],
-        default_function_keys={"f": "ConvexFunction"},
         default_hyperparameters=[
             HyperparameterSpec(
                 name="gamma",
@@ -190,5 +192,6 @@ BASE_ALGORITHMS: Dict[str, AlgorithmSpec] = {
                 value_type="float",
             ),
         ],
+        default_function_rows=[{"id": "slot-f", "name": "f", "function_key": "ConvexFunction", "function_params": {}}],
     ),
 }

@@ -271,17 +271,20 @@ def _next_function_row_id(algo_key: str) -> str:
 
 
 def _default_function_rows_from_spec(spec: AlgorithmSpec) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for slot in spec.function_slots:
-        rows.append(
-            {
-                "id": f"slot-{slot.key}",
-                "name": slot.key,
-                "function_key": spec.default_function_keys.get(slot.key, ""),
-                "function_params": {},
-            }
-        )
-    return rows
+    if spec.default_function_rows:
+        rows: list[dict[str, object]] = []
+        for row in spec.default_function_rows:
+            rows.append(
+                {
+                    "id": str(row.get("id", "")),
+                    "name": str(row.get("name", "")),
+                    "function_key": str(row.get("function_key", "")),
+                    "function_params": dict(row.get("function_params", {})),
+                }
+            )
+        if rows:
+            return rows
+    return []
 
 
 def _sanitize_function_rows(
@@ -449,9 +452,8 @@ def _run_steps_smoke_test(
         temp_spec = AlgorithmSpec(
             name=spec.name,
             algo=steps,
-            function_slots=list(spec.function_slots),
-            default_function_keys=dict(spec.default_function_keys),
             default_hyperparameters=list(spec.default_hyperparameters),
+            default_function_rows=list(spec.default_function_rows),
         )
         configured_hyperparameters: list[HyperparameterSpec] = list(test_context.get("hyperparameter_specs", []))
         algo_params: dict[str, float | int] = {}
@@ -516,6 +518,10 @@ def _render_steps_editor(
                     name=name,
                     steps_code=str(steps_code),
                     base_algo=base_algo,
+                    default_hyperparameters=list(test_context.get("hyperparameter_specs", []))
+                    if test_context
+                    else None,
+                    default_function_rows=list(test_context.get("function_rows", [])) if test_context else None,
                 )
             except Exception as exc:
                 st.error(str(exc))
@@ -770,6 +776,15 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                     "function_row_errors": list(function_row_errors),
                     "runtime_param_errors": runtime_param_errors,
                     "hyperparameter_specs": list(hyperparameter_specs),
+                    "function_rows": [
+                        {
+                            "id": str(row.get("id", "")),
+                            "name": str(row.get("name", "")),
+                            "function_key": str(row.get("function_key", "")),
+                            "function_params": dict(row.get("function_params", {})),
+                        }
+                        for row in function_rows
+                    ],
                 },
             )
 

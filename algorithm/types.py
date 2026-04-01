@@ -37,17 +37,11 @@ class FunctionSpec:
 
 
 @dataclass
-class FunctionSlot:
-    key: str
-
-
-@dataclass
 class AlgorithmSpec:
     name: str
     algo: Callable[[PEP, Dict[str, object], Dict[str, float]], dict]
-    function_slots: List[FunctionSlot]
-    default_function_keys: Dict[str, str]
     default_hyperparameters: List[HyperparameterSpec] = field(default_factory=list)
+    default_function_rows: List[Dict[str, object]] = field(default_factory=list)
 
 
 def default_gamma_n_hyperparameters() -> List[HyperparameterSpec]:
