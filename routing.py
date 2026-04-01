@@ -1,6 +1,6 @@
 # routing.py
 import re
-from math import prod
+from math import isfinite, prod
 from pathlib import Path
 
 import pandas as pd
@@ -123,11 +123,7 @@ def _render_hyperparameter_editor(algo_key: str, spec: AlgorithmSpec) -> tuple[l
         },
     )
     edited_rows = [{col: row.get(col) for col in _HYPERPARAM_COLUMNS} for row in edited.to_dict(orient="records")]
-
-    # Persist explicitly on user action; do not overwrite canonical state every rerun.
-    if st.button("Save hyperparameter changes", key=f"btn-hp-save-{algo_key}"):
-        store[algo_key] = edited_rows
-        st.success("Hyperparameter changes saved.")
+    store[algo_key] = edited_rows
 
     return _parse_hyperparameter_specs(edited_rows)
 
@@ -1312,6 +1308,27 @@ def render_dual_values_panel(
     run_series_data_by_param: dict[str, dict],
     tau_payload: dict,
 ) -> dict | None:
+    def _json_safe(value: object) -> object:
+        if isinstance(value, dict):
+            return {str(k): _json_safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_json_safe(v) for v in value]
+        if isinstance(value, bool) or value is None:
+            return value
+        if isinstance(value, (int, float)):
+            if isinstance(value, float) and not isfinite(value):
+                return None
+            return value
+        if isinstance(value, (pd.Timestamp,)):
+            return str(value)
+        if hasattr(value, "item"):
+            try:
+                scalar = value.item()
+            except Exception:
+                return str(value)
+            return _json_safe(scalar)
+        return value
+
     metric_labels = {
         "non_zero_pct": "Non-zero %",
         "non_zero_pct_with_none": "Non-zero % (None=0)",
@@ -1344,17 +1361,18 @@ def render_dual_values_panel(
                 "series_data_by_param": run_series_data_by_param.get(run["id"], {}),
             }
         )
+    payload = {
+        "css": DUAL_PANEL_CSS,
+        "tau_payload": tau_payload,
+        "series_data_by_param": tau_payload.get("series_data_by_param", {}),
+        "dual_runs": dual_runs_data,
+        "selected_series_ids": selected_series_ids,
+        "metric": metric,
+        "metric_labels": metric_labels,
+    }
     result = DUAL_PANEL_COMPONENT(
         key=f"dual-panel-{algo_key}",
-        data={
-            "css": DUAL_PANEL_CSS,
-            "tau_payload": tau_payload,
-            "series_data_by_param": tau_payload.get("series_data_by_param", {}),
-            "dual_runs": dual_runs_data,
-            "selected_series_ids": selected_series_ids,
-            "metric": metric,
-            "metric_labels": metric_labels,
-        },
+        data=_json_safe(payload),
         height="content",
         isolate_styles=False,
         on_recompute_change=lambda: None,
