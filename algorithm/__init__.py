@@ -1,22 +1,15 @@
+from .algorithm_compiler import compile_algorithm_body
 from .algorithm_custom import (
     ALGORITHMS,
     CUSTOM_ALGORITHMS,
     CUSTOM_ALGORITHMS_PATH,
     CUSTOM_SPECS,
-    _compile_steps,
     get_algorithm_steps_code,
     get_base_algorithm_name,
     register_custom_algorithm,
     remove_custom_algorithm,
 )
-from .algorithm_templates import (
-    BASE_ALGORITHMS,
-    accelerated_proximal_point,
-    epsilon_subgradient,
-    gradient_descent,
-    proximal_gradient,
-    subgradient_method,
-)
+from .algorithm_templates import BASE_ALGORITHM_BODIES, BASE_ALGORITHMS
 from .function_registry import (
     EXCLUDED_INIT_PARAMS,
     FUNCTIONS,
@@ -39,6 +32,7 @@ from .types import (
 __all__ = [
     "ALGORITHMS",
     "BASE_ALGORITHMS",
+    "BASE_ALGORITHM_BODIES",
     "CUSTOM_ALGORITHMS",
     "CUSTOM_ALGORITHMS_PATH",
     "CUSTOM_SPECS",
@@ -50,16 +44,11 @@ __all__ = [
     "FunctionSlot",
     "FunctionSpec",
     "HyperparameterSpec",
-    "accelerated_proximal_point",
-    "epsilon_subgradient",
-    "gradient_descent",
-    "proximal_gradient",
-    "subgradient_method",
-    "_compile_steps",
     "build_function_spec",
     "create_instance",
     "default_gamma_n_hyperparameters",
     "get_algorithm_steps_code",
+    "compile_algorithm_body",
     "get_base_algorithm_name",
     "get_required_init_args",
     "list_classes_from_all",

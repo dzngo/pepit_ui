@@ -11,7 +11,7 @@ from streamlit_ace import st_ace
 from algorithm.algorithm_custom import (
     ALGORITHMS,
     CUSTOM_ALGORITHMS,
-    _compile_steps,
+    compile_algorithm_body,
     get_algorithm_steps_code,
     get_base_algorithm_name,
     register_custom_algorithm,
@@ -61,6 +61,18 @@ def reset_for_algorithm_change(algo_key: str):
 _HYPERPARAM_COLUMNS = ("name", "label", "value_type", "min", "max", "step", "default")
 _HYPERPARAM_RESERVED_NAMES = {"x", "pi", "e"}
 _FUNCTION_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_RUNTIME_RESERVED_NAMES = {
+    "problem",
+    "funcs",
+    "params",
+    "customized_algorithm",
+    "PEP",
+    "Point",
+    "Function",
+    "Dict",
+    "np",
+    "sqrt",
+}
 
 
 def _hyperparameter_rows_from_specs(specs: list[HyperparameterSpec]) -> list[dict]:
@@ -123,7 +135,7 @@ def _render_hyperparameter_editor(algo_key: str, spec: AlgorithmSpec) -> tuple[l
         },
     )
     edited_rows = [{col: row.get(col) for col in _HYPERPARAM_COLUMNS} for row in edited.to_dict(orient="records")]
-    store[algo_key] = edited_rows
+    # store[algo_key] = edited_rows
 
     return _parse_hyperparameter_specs(edited_rows)
 
@@ -158,6 +170,9 @@ def _parse_hyperparameter_specs(rows: list[dict]) -> tuple[list[HyperparameterSp
             continue
         seen_names.add(raw_name)
         if raw_name in _HYPERPARAM_RESERVED_NAMES:
+            errors.append(f"Hyperparameter row {row_idx}: '{raw_name}' is reserved.")
+            continue
+        if raw_name in _RUNTIME_RESERVED_NAMES:
             errors.append(f"Hyperparameter row {row_idx}: '{raw_name}' is reserved.")
             continue
         if raw_type not in {"float", "int"}:
@@ -334,6 +349,8 @@ def _validate_function_rows(rows: list[dict[str, object]]) -> list[str]:
             errors.append(f"Function row {idx}: name is required.")
         elif not _FUNCTION_NAME_PATTERN.fullmatch(name):
             errors.append(f"Function row {idx}: invalid name '{name}'. Use letters, numbers, and '_' only.")
+        elif name in _RUNTIME_RESERVED_NAMES:
+            errors.append(f"Function row {idx}: '{name}' is reserved.")
         elif name in seen:
             errors.append(f"Function row {idx}: duplicate name '{name}'.")
         else:
@@ -402,11 +419,7 @@ def _steps_source(spec: AlgorithmSpec) -> str:
 
 
 def _editor_steps_source(spec: AlgorithmSpec) -> str:
-    code = _steps_source(spec)
-    pattern = r"^def\s+\w+\s*\("
-    if re.search(pattern, code, flags=re.MULTILINE):
-        return re.sub(pattern, "def customized_algorithm(", code, count=1, flags=re.MULTILINE)
-    return code
+    return _steps_source(spec)
 
 
 def _run_steps_smoke_test(
@@ -429,7 +442,7 @@ def _run_steps_smoke_test(
         if is_custom_editor_open:
             default_steps = _editor_steps_source(spec)
             steps_code = st.session_state.get(code_key, default_steps)
-            steps = _compile_steps(steps_code)
+            steps = compile_algorithm_body(steps_code)
         else:
             # For non-customized flow, use the registered algorithm callable directly.
             steps = spec.algo

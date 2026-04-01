@@ -86,6 +86,11 @@ def run_algorithm(
         # Strict replace: expose only the configured canonical name in funcs.
         funcs[canonical_name] = func
 
+    overlap = set(funcs).intersection(algo_params)
+    if overlap:
+        names = ", ".join(sorted(overlap))
+        raise ValueError(f"Function names conflict with hyperparameter names: {names}")
+
     algo_spec.algo(problem, funcs, algo_params)
 
     problem._prepare_constraints(verbose=0)
