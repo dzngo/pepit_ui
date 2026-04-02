@@ -18,6 +18,10 @@ def _primitive_steps_namespace() -> dict[str, object]:
     return out
 
 
+def list_supported_primitive_steps() -> list[str]:
+    return sorted(_primitive_steps_namespace().keys())
+
+
 def compile_algorithm_body(body_code: str) -> Callable[[PEP, Dict[str, object], Dict[str, float]], dict]:
     if any(line.lstrip().startswith("def ") for line in body_code.splitlines() if line.strip()):
         raise ValueError("Algorithm code must be function body only; do not include a 'def ...' wrapper.")

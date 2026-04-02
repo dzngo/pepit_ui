@@ -8,6 +8,7 @@ import streamlit as st
 import streamlit.components.v2 as components_v2
 from streamlit_ace import st_ace
 
+from algorithm.algorithm_compiler import list_supported_primitive_steps
 from algorithm.algorithm_custom import (
     ALGORITHMS,
     CUSTOM_ALGORITHMS,
@@ -491,7 +492,7 @@ def _render_steps_editor(
             value=st.session_state.get(code_key, ""),
             language="python",
             key=editor_key,
-            height=320,
+            height=None,
             show_gutter=False,
             wrap=False,
             theme="github",
@@ -499,6 +500,19 @@ def _render_steps_editor(
         )
         if isinstance(updated, str):
             st.session_state[code_key] = updated
+        primitive_steps = list_supported_primitive_steps()
+        st.caption("Algorithm body can directly use configured function/hyperparameter names.")
+        with st.expander("Supported primitive steps", expanded=False):
+            if primitive_steps:
+                tags_html = "".join(
+                    f"<span style='display:inline-block;padding:3px 8px;margin:4px 6px 0 0;"
+                    f"border:1px solid #d4d4d8;border-radius:999px;background:#f8fafc;"
+                    f"font-family:monospace;font-size:12px;color:#0f172a;'>{name}</span>"
+                    for name in primitive_steps
+                )
+                st.markdown(f"<div>{tags_html}</div>", unsafe_allow_html=True)
+            else:
+                st.caption("No primitive steps detected.")
         st.text_input("Custom algorithm name", key=name_key)
         col1, col2, col3 = st.columns(3)
         with col1:
