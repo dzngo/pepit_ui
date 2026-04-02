@@ -518,9 +518,9 @@ def _render_steps_editor(
                     name=name,
                     steps_code=str(steps_code),
                     base_algo=base_algo,
-                    default_hyperparameters=list(test_context.get("hyperparameter_specs", []))
-                    if test_context
-                    else None,
+                    default_hyperparameters=(
+                        list(test_context.get("hyperparameter_specs", [])) if test_context else None
+                    ),
                     default_function_rows=list(test_context.get("function_rows", [])) if test_context else None,
                 )
             except Exception as exc:
@@ -604,8 +604,6 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
             if not function_names:
                 st.error("No function types are registered.")
             else:
-                st.caption("Each block defines `funcs[name]` and its function class.")
-
                 remove_row_id: str | None = None
                 for idx, row in enumerate(function_rows, start=1):
                     row_id = str(row.get("id") or _next_function_row_id(algo_key))
@@ -739,7 +737,10 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                             for key in stale_params:
                                 slot_params.pop(key, None)
 
-                        if st.button("Remove", key=f"{_function_row_id_key(algo_key)}remove-{row_id}"):
+                        if len(function_rows) >= 2 and st.button(
+                            "Remove",
+                            key=f"{_function_row_id_key(algo_key)}remove-{row_id}",
+                        ):
                             remove_row_id = row_id
 
                 if remove_row_id is not None:

@@ -16,10 +16,8 @@ x0 = problem.set_initial_point()
 problem.set_initial_condition((x0 - xs) ** 2 <= 1)
 x = x0
 x.set_name("x_0")
-steps = int(n)
-step_size = float(gamma)
-for i in range(steps):
-    x = x - step_size * f.gradient(x)
+for i in range(n):
+    x = x - gamma * f.gradient(x)
     x.set_name(f"x_{i+1}")
 problem.set_performance_metric(f(x) - fs)
 """.strip(),
@@ -32,11 +30,9 @@ problem.set_initial_condition((x0 - xs) ** 2 <= 1)
 x = x0
 x.set_name("x_0")
 gx, fx = f.oracle(x)
-steps = int(n)
-step_size = float(gamma)
-for i in range(steps):
+for i in range(n):
     problem.set_performance_metric(fx - fs)
-    x = x - step_size * gx
+    x = x - gamma * gx
     gx, fx = f.oracle(x)
     x.set_name(f"x_{i+1}")
 problem.set_performance_metric(fx - fs)
@@ -49,15 +45,13 @@ x0 = problem.set_initial_point()
 problem.set_initial_condition((x0 - xs) ** 2 <= 1)
 x = x0
 x.set_name("x_0")
-steps = int(n)
-step_size = float(gamma)
-for i in range(steps):
-    y = x - step_size * f1.gradient(x)
-    x, _, _ = proximal_step(y, f2, step_size)
+for i in range(n):
+    y = x - gamma * f1.gradient(x)
+    x, _, _ = proximal_step(y, f2, gamma)
     x.set_name(f"x_{i+1}")
 problem.set_performance_metric((x - xs) ** 2)
 """.strip(),
-    "accelerated_proximal_point": """
+    "accelerated_gradient_convex": """
 xs = f.stationary_point()
 xs.set_name("x_*")
 fs = f(xs)
@@ -67,42 +61,34 @@ x = x0
 x.set_name("x_0")
 y = x0
 lam = 1
-steps = int(n)
-step_size = float(gamma)
-for i in range(steps):
+for i in range(n):
     lam_old = lam
     lam = (1 + sqrt(4 * lam_old**2 + 1)) / 2
     x_old = x
-    x = y - step_size * f.gradient(y)
+    x = y - gamma * f.gradient(y)
     y = x + (lam_old - 1) / lam * (x - x_old)
     x.set_name(f"x_{i+1}")
     y.set_name(f"y_{i+1}")
 problem.set_performance_metric(f(x) - fs)
 """.strip(),
     "epsilon_subgradient": """
-M_value = float(M)
-eps_value = float(eps)
-R_value = float(R)
-steps = int(n)
-step_size = float(gamma)
-
 xs = f.stationary_point()
 xs.set_name("x_*")
 fs = f(xs)
 x0 = problem.set_initial_point()
-problem.set_initial_condition((x0 - xs) ** 2 <= R_value**2)
+problem.set_initial_condition((x0 - xs) ** 2 <= R**2)
 x = x0
 x.set_name("x_0")
 
-for i in range(steps):
-    x, gx, fx, epsilon = epsilon_subgradient_step(x, f, step_size)
+for i in range(n):
+    x, gx, fx, epsilon = epsilon_subgradient_step(x, f, gamma)
     x.set_name(f"x_{i+1}")
     problem.set_performance_metric(fx - fs)
-    problem.add_constraint(epsilon <= eps_value)
-    problem.add_constraint(gx**2 <= M_value**2)
+    problem.add_constraint(epsilon <= eps)
+    problem.add_constraint(gx**2 <= M**2)
 
 gx, fx = f.oracle(x)
-problem.add_constraint(gx**2 <= M_value**2)
+problem.add_constraint(gx**2 <= M**2)
 problem.set_performance_metric(fx - fs)
 """.strip(),
 }
@@ -134,9 +120,9 @@ BASE_ALGORITHMS: Dict[str, AlgorithmSpec] = {
             {"id": "slot-f2", "name": "f2", "function_key": "ConvexFunction", "function_params": {}},
         ],
     ),
-    "accelerated_proximal_point": AlgorithmSpec(
-        name="accelerated_proximal_point",
-        algo=compile_algorithm_body(BASE_ALGORITHM_BODIES["accelerated_proximal_point"]),
+    "accelerated_gradient_convex": AlgorithmSpec(
+        name="accelerated_gradient_convex",
+        algo=compile_algorithm_body(BASE_ALGORITHM_BODIES["accelerated_gradient_convex"]),
         default_hyperparameters=default_gamma_n_hyperparameters(),
         default_function_rows=[
             {"id": "slot-f", "name": "f", "function_key": "SmoothStronglyConvexFunction", "function_params": {}}
