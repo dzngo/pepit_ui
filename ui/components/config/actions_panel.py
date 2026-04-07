@@ -7,7 +7,7 @@ from algorithm.algorithm_custom import (
 )
 from algorithm.function_registry import FUNCTIONS
 from core.compute import clear_algorithm_caches
-from services.config_service import (
+from service.config_service import (
     build_pending_settings,
     build_steps_test_context,
     collect_config_errors,

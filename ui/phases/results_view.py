@@ -1,7 +1,7 @@
 import streamlit as st
 
 from core.compute import build_pattern_param_values, compute
-from services.results_service import (
+from service.results_service import (
     append_recompute_run,
     build_results_artifacts,
     handle_results_event,

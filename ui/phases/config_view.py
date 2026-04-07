@@ -3,7 +3,7 @@ from pathlib import Path
 import streamlit as st
 
 from algorithm.types import AlgorithmSpec
-from services.config_service import build_steps_test_context
+from service.config_service import build_steps_test_context
 from ui.components.algorithm_editor import render_steps_editor as _render_steps_editor
 from ui.components.config import (
     handle_plot_action,

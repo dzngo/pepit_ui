@@ -3,7 +3,7 @@ from math import prod
 import streamlit as st
 
 from core.compute import discrete_values
-from services.loading_service import (
+from service.loading_service import (
     clear_stale_loading_state,
     finalize_loading_success,
     interrupt_loading,

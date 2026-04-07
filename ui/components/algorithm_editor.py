@@ -5,7 +5,7 @@ from algorithm.algorithm_compiler import list_supported_primitive_steps
 from algorithm.algorithm_custom import compile_algorithm_body, get_algorithm_steps_code
 from algorithm.runtime import run_algorithm
 from algorithm.types import AlgorithmSpec, HyperparameterSpec
-from services.config_service import (
+from service.config_service import (
     register_custom_algorithm_bundle,
     sync_custom_algorithm_defaults_in_state,
 )

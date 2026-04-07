@@ -17,7 +17,7 @@ Current high-level structure:
 ```text
 app.py
 
-application/               # workflow/use-case services
+service/               # workflow/use-case services
 algorithm/                 # algorithm specs, compiler, runtime
 core/                      # compute/config domain logic + ports
 infrastructure/            # cache/executor adapters
