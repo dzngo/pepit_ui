@@ -2,7 +2,7 @@
 import streamlit as st
 
 from algorithm.algorithm_custom import ALGORITHMS
-from routing import (
+from ui.app_shell.views import (
     init_session_state,
     render_config_phase,
     render_loading_phase,
@@ -12,9 +12,9 @@ from routing import (
 
 
 def main():
+    st.set_page_config(page_title="PEPit UI", page_icon="🔢", layout="wide")
     init_session_state()
     st.title("Interactive PEPit explorer")
-    st.set_page_config(page_title="PEPit UI", page_icon="🔢", layout="wide")
     st.divider()
 
     if "pending_algorithm_select" in st.session_state:
