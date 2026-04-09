@@ -6,7 +6,7 @@ from algorithm.algorithm_custom import (
     remove_custom_algorithm,
 )
 from algorithm.function_registry import FUNCTIONS
-from core.compute import clear_algorithm_caches
+from infrastructure.compute_runner import clear_compute_caches
 from service.config_service import (
     build_pending_settings,
     build_steps_test_context,
@@ -32,7 +32,7 @@ def render_remove_custom_algorithms_panel() -> None:
     remove_clicked = st.button("Remove", key="btn-remove-config")
     if remove_clicked:
         try:
-            clear_algorithm_caches(selected_custom)
+            clear_compute_caches(selected_custom)
             remove_custom_algorithm(selected_custom)
         except Exception as exc:
             st.error(str(exc))

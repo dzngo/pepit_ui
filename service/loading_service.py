@@ -1,6 +1,6 @@
 from collections.abc import MutableMapping
 
-from core.compute import compute
+from infrastructure.compute_runner import run_compute_grid
 
 
 def clear_stale_loading_state(
@@ -37,7 +37,7 @@ def run_loading_batch(
     progress_state_key: str,
     batch_size: int,
 ):
-    return compute(
+    return run_compute_grid(
         algo_key,
         current_pending["function_config"],
         hyperparameter_specs,

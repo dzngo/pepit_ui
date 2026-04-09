@@ -1,4 +1,4 @@
-from .grid_compute import clear_algorithm_caches, compute, discrete_values
+from .engine import discrete_values
 from .patterns import (
     build_pattern_param_values,
     evaluate_pattern_expression,
@@ -16,8 +16,6 @@ from .series import (
 )
 
 __all__ = [
-    "clear_algorithm_caches",
-    "compute",
     "discrete_values",
     "build_dual_section_html",
     "build_dual_series_by_param",

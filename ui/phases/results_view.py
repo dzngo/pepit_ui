@@ -1,6 +1,7 @@
 import streamlit as st
 
-from core.compute import build_pattern_param_values, compute
+from core.compute import build_pattern_param_values
+from infrastructure.compute_runner import run_compute_grid
 from service.results_service import (
     append_recompute_run,
     build_results_artifacts,
@@ -33,7 +34,7 @@ def render_results_phase(algo_key: str, spec):
         st.session_state["ui_phase"] = "config"
         st.rerun()
 
-    result = compute(
+    result = run_compute_grid(
         algo_key,
         settings["function_config"],
         list(settings.get("hyperparameter_specs", [])),
@@ -189,7 +190,7 @@ def render_results_phase(algo_key: str, spec):
                 st.session_state[local_axis_state_key] = outcome["next_local_cursor_indices_by_axis"]
                 st.session_state[pattern_state_key] = outcome["next_patterns_by_param"]
                 with st.spinner("Recomputing tau grid with selected dual values..."):
-                    recompute_result = compute(
+                    recompute_result = run_compute_grid(
                         algo_key,
                         settings["function_config"],
                         list(settings.get("hyperparameter_specs", [])),

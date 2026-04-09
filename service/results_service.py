@@ -3,9 +3,9 @@ from core.compute import (
     build_dual_series_by_param,
     build_dual_slice_by_param,
     build_tau_series_by_param,
-    compute,
     dual_ranking_by_slice,
 )
+from infrastructure.compute_runner import run_compute_grid
 from ui.state.state_utils import (
     clamp_cursor_indices,
     clamp_local_cursor_indices_by_axis,
@@ -31,7 +31,7 @@ def build_results_artifacts(
         selected_series_ids = tuple(sorted(set(run.get("selected_series_ids", []))))
         if not selected_series_ids:
             continue
-        run_result = compute(
+        run_result = run_compute_grid(
             algo_key,
             settings["function_config"],
             hyperparameter_specs,
@@ -56,7 +56,7 @@ def build_results_artifacts(
             for warning in run_result[2]:
                 warning_messages.add(f"{run['name']}: {warning}")
 
-    nd_result = compute(
+    nd_result = run_compute_grid(
         algo_key,
         settings["function_config"],
         hyperparameter_specs,

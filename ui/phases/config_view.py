@@ -15,7 +15,7 @@ from ui.state.config_state import build_function_config as _cfg_build_function_c
 
 
 def render_config_phase(algo_key: str, spec: AlgorithmSpec):
-    css_path = Path(__file__).resolve().parents[1] / "assets" / "css" / "config_panel.css"
+    css_path = Path(__file__).resolve().parents[1] / "assets" / "config_panel" / "config_panel.css"
     if css_path.exists():
         st.markdown(f"<style>{css_path.read_text()}</style>", unsafe_allow_html=True)
     st.subheader("Configuration")

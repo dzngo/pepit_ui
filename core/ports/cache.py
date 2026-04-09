@@ -3,6 +3,12 @@ from typing import Protocol
 
 
 class PointCachePort(Protocol):
+    """Persistent point-level cache.
+
+    Stores/retrieves individual parameter-point evaluations and survives across
+    app reruns/sessions when backed by disk.
+    """
+
     def get(self, key: tuple):
         ...
 
@@ -17,6 +23,12 @@ class PointCachePort(Protocol):
 
 
 class GridCachePort(Protocol):
+    """Session-scoped full-grid cache.
+
+    Stores/retrieves fully assembled N-D compute results for the current app
+    session (typically backed by Streamlit session state).
+    """
+
     def get(self, key: tuple):
         ...
 
