@@ -12,9 +12,9 @@ from service.config_service import (
     build_steps_test_context,
     collect_config_errors,
 )
-from ui.components.algorithm_editor import run_steps_smoke_test as _run_steps_smoke_test
-from ui.state.config_state import build_function_config as _cfg_build_function_config
-from ui.state.state_utils import loading_progress_key as _loading_progress_key
+from ui.components.algorithm_editor import run_steps_smoke_test
+from ui.state.config_state import build_function_config
+from ui.state.state_utils import algo_state_key
 
 
 def render_remove_custom_algorithms_panel() -> None:
@@ -69,7 +69,7 @@ def handle_plot_action(
             st.error(error)
         return
 
-    function_config = _cfg_build_function_config(
+    function_config = build_function_config(
         algo_key,
         spec,
         valid_function_keys=sorted(FUNCTIONS.keys()),
@@ -81,7 +81,7 @@ def handle_plot_action(
         runtime_param_errors=runtime_param_errors,
         hyperparameter_specs=hyperparameter_specs,
     )
-    test_error = _run_steps_smoke_test(
+    test_error = run_steps_smoke_test(
         spec=spec,
         context="config",
         algo_key=algo_key,
@@ -97,6 +97,6 @@ def handle_plot_action(
         function_config=function_config,
         rerun_nan_caches=bool(st.session_state.get("rerun_nan_caches", False)),
     )
-    st.session_state.pop(_loading_progress_key(algo_key), None)
+    st.session_state.pop(algo_state_key("loading_progress", algo_key), None)
     st.session_state["ui_phase"] = "loading"
     st.rerun()

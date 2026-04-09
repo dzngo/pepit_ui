@@ -4,14 +4,14 @@ import streamlit as st
 
 from algorithm.types import AlgorithmSpec
 from service.config_service import build_steps_test_context
-from ui.components.algorithm_editor import render_steps_editor as _render_steps_editor
+from ui.components.algorithm_editor import render_steps_editor
 from ui.components.config import (
     handle_plot_action,
     render_functions_panel,
     render_hyperparameter_editor,
     render_remove_custom_algorithms_panel,
 )
-from ui.state.config_state import build_function_config as _cfg_build_function_config
+from ui.state.config_state import build_function_config
 
 
 def render_config_phase(algo_key: str, spec: AlgorithmSpec):
@@ -39,12 +39,12 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
     with sections[0]:
         with st.container(border=True):
             st.write("Algorithm")
-            function_config = _cfg_build_function_config(
+            function_config = build_function_config(
                 algo_key,
                 spec,
                 valid_function_keys=function_names,
             )
-            _render_steps_editor(
+            render_steps_editor(
                 algo_key=algo_key,
                 spec=spec,
                 context="config",

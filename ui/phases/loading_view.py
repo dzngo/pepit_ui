@@ -10,23 +10,12 @@ from service.loading_service import (
     progress_from_state,
     run_loading_batch,
 )
-from ui.components.algorithm_editor import steps_source as _steps_source
-from ui.state.state_utils import cursor_indices_key as _cursor_indices_key
-from ui.state.state_utils import default_cursor_indices as _default_cursor_indices
+from ui.components.algorithm_editor import steps_source
 from ui.state.state_utils import (
-    default_local_cursor_indices_by_axis as _default_local_cursor_indices_by_axis,
+    algo_state_key,
+    default_cursor_indices,
+    default_local_cursor_indices_by_axis,
 )
-from ui.state.state_utils import last_cursor_event_key as _last_cursor_event_key
-from ui.state.state_utils import last_metric_event_key as _last_metric_event_key
-from ui.state.state_utils import last_recompute_event_key as _last_recompute_event_key
-from ui.state.state_utils import last_remove_event_key as _last_remove_event_key
-from ui.state.state_utils import loading_progress_key as _loading_progress_key
-from ui.state.state_utils import (
-    local_cursor_indices_by_axis_key as _local_cursor_indices_by_axis_key,
-)
-from ui.state.state_utils import patterns_by_param_key as _patterns_by_param_key
-from ui.state.state_utils import run_counter_key as _run_counter_key
-from ui.state.state_utils import runs_key as _runs_key
 
 
 def render_loading_phase(algo_key: str, spec):
@@ -34,7 +23,7 @@ def render_loading_phase(algo_key: str, spec):
     if not pending or pending["algo_key"] != algo_key:
         clear_stale_loading_state(
             st.session_state,
-            progress_key=_loading_progress_key(algo_key),
+            progress_key=algo_state_key("loading_progress", algo_key),
         )
         st.rerun()
 
@@ -52,7 +41,7 @@ def render_loading_phase(algo_key: str, spec):
             )
         st.markdown("<br>".join(summary_lines), unsafe_allow_html=True)
         st.markdown("**Steps**")
-        st.code(_steps_source(spec), language="python")
+        st.code(steps_source(spec), language="python")
         st.markdown("**Functions**")
         for slot_key, slot_config in sorted(pending["function_config"].items()):
             alias = str(slot_config.get("alias", slot_key) or slot_key)
@@ -63,7 +52,7 @@ def render_loading_phase(algo_key: str, spec):
             else:
                 st.markdown("*params*: `{}`")
 
-    progress_key = _loading_progress_key(algo_key)
+    progress_key = algo_state_key("loading_progress", algo_key)
     # Keep batches small enough so the fragment remains responsive to "Interrupt".
     batch_size = 24
     total_estimate = prod(len(discrete_values(hp)) for hp in hyperparameter_specs) if hyperparameter_specs else 0
@@ -103,23 +92,23 @@ def render_loading_phase(algo_key: str, spec):
         if result is None:
             return
 
-        cursor_indices = _default_cursor_indices(hyperparameter_specs)
-        local_cursor_indices_by_axis = _default_local_cursor_indices_by_axis(hyperparameter_specs, cursor_indices)
+        cursor_indices = default_cursor_indices(hyperparameter_specs)
+        local_cursor_indices_by_axis = default_local_cursor_indices_by_axis(hyperparameter_specs, cursor_indices)
         patterns_by_param = {hp.name: "" for hp in hyperparameter_specs}
         finalize_loading_success(
             st.session_state,
             algo_key=algo_key,
             current_pending=current_pending,
             progress_key=progress_key,
-            runs_key=_runs_key(algo_key),
-            run_counter_key=_run_counter_key(algo_key),
-            last_recompute_event_key=_last_recompute_event_key(algo_key),
-            last_cursor_event_key=_last_cursor_event_key(algo_key),
-            last_metric_event_key=_last_metric_event_key(algo_key),
-            last_remove_event_key=_last_remove_event_key(algo_key),
-            cursor_state_key=_cursor_indices_key(algo_key),
-            local_axis_state_key=_local_cursor_indices_by_axis_key(algo_key),
-            pattern_state_key=_patterns_by_param_key(algo_key),
+            runs_key=algo_state_key("recompute_runs", algo_key),
+            run_counter_key=algo_state_key("recompute_counter", algo_key),
+            last_recompute_event_key=algo_state_key("recompute_event", algo_key),
+            last_cursor_event_key=algo_state_key("cursor_event", algo_key),
+            last_metric_event_key=algo_state_key("metric_event", algo_key),
+            last_remove_event_key=algo_state_key("remove_run_event", algo_key),
+            cursor_state_key=algo_state_key("cursor_indices_by_param", algo_key),
+            local_axis_state_key=algo_state_key("local_cursor_indices_by_axis", algo_key),
+            pattern_state_key=algo_state_key("tau_patterns_by_param", algo_key),
             cursor_indices=cursor_indices,
             local_cursor_indices_by_axis=local_cursor_indices_by_axis,
             patterns_by_param=patterns_by_param,

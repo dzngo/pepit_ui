@@ -1,17 +1,29 @@
+from typing import Literal
+
 from algorithm.types import HyperparameterSpec
 from core.compute import discrete_values
 
+AlgoStatePrefix = Literal[
+    "cursor_indices_by_param",
+    "local_cursor_indices_by_axis",
+    "tau_patterns_by_param",
+    "recompute_runs",
+    "recompute_counter",
+    "recompute_event",
+    "cursor_event",
+    "metric_event",
+    "remove_run_event",
+    "loading_progress",
+]
 
-def cursor_indices_key(algo_key: str) -> str:
-    return f"cursor_indices_by_param_{algo_key}"
 
+def algo_state_key(prefix: AlgoStatePrefix, algo_key: str) -> str:
+    """Build session-state keys scoped by algorithm key.
 
-def local_cursor_indices_by_axis_key(algo_key: str) -> str:
-    return f"local_cursor_indices_by_axis_{algo_key}"
-
-
-def patterns_by_param_key(algo_key: str) -> str:
-    return f"tau_patterns_by_param_{algo_key}"
+    Example: `algo_state_key("recompute_runs", "gradient_descent")`
+    returns `"recompute_runs_gradient_descent"`.
+    """
+    return f"{prefix}_{algo_key}"
 
 
 def default_index_for_spec(spec: HyperparameterSpec) -> int:
@@ -74,31 +86,3 @@ def clamp_local_cursor_indices_by_axis(
             axis_map[hp.name] = max(0, min(raw_idx, max_idx))
         clamped[axis] = axis_map
     return clamped
-
-
-def runs_key(algo_key: str) -> str:
-    return f"recompute_runs_{algo_key}"
-
-
-def run_counter_key(algo_key: str) -> str:
-    return f"recompute_counter_{algo_key}"
-
-
-def last_recompute_event_key(algo_key: str) -> str:
-    return f"recompute_event_{algo_key}"
-
-
-def last_cursor_event_key(algo_key: str) -> str:
-    return f"cursor_event_{algo_key}"
-
-
-def last_metric_event_key(algo_key: str) -> str:
-    return f"metric_event_{algo_key}"
-
-
-def last_remove_event_key(algo_key: str) -> str:
-    return f"remove_run_event_{algo_key}"
-
-
-def loading_progress_key(algo_key: str) -> str:
-    return f"loading_progress_{algo_key}"

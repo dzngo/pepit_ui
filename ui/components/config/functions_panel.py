@@ -3,14 +3,12 @@ import streamlit as st
 from algorithm.function_registry import FUNCTIONS
 from algorithm.types import AlgorithmSpec
 from core.compute import float_text_default, parse_float_input, parse_float_list
-from ui.state.config_state import function_row_id_key as _cfg_function_row_id_key
-from ui.state.config_state import get_function_rows as _cfg_get_function_rows
-from ui.state.config_state import next_function_row_id as _cfg_next_function_row_id
 from ui.state.config_state import (
-    suggest_new_function_name as _cfg_suggest_new_function_name,
-)
-from ui.state.config_state import (
-    validate_function_rows_with_rules as _cfg_validate_function_rows,
+    function_row_id_key,
+    get_function_rows,
+    next_function_row_id,
+    suggest_new_function_name,
+    validate_function_rows_with_rules,
 )
 
 _RUNTIME_RESERVED_NAMES = {
@@ -33,7 +31,7 @@ def render_functions_panel(
     spec: AlgorithmSpec,
 ) -> tuple[list[str], list[dict[str, object]], list[str], list[str]]:
     function_names = sorted(FUNCTIONS.keys())
-    function_rows = _cfg_get_function_rows(
+    function_rows = get_function_rows(
         algo_key,
         spec,
         valid_function_keys=function_names,
@@ -46,7 +44,7 @@ def render_functions_panel(
     else:
         remove_row_id: str | None = None
         for idx, row in enumerate(function_rows, start=1):
-            row_id = str(row.get("id") or _cfg_next_function_row_id(algo_key))
+            row_id = str(row.get("id") or next_function_row_id(algo_key))
             row["id"] = row_id
             with st.container(border=True):
                 name_col, function_type_col = st.columns([1, 3])
@@ -54,7 +52,7 @@ def render_functions_panel(
                     name_value = st.text_input(
                         "name",
                         value=str(row.get("name", "")),
-                        key=f"{_cfg_function_row_id_key(algo_key)}name-{row_id}",
+                        key=f"{function_row_id_key(algo_key)}name-{row_id}",
                     )
                 with function_type_col:
                     selected_function = str(row.get("function_key") or "")
@@ -64,7 +62,7 @@ def render_functions_panel(
                         "function type",
                         options=function_names,
                         index=(function_names.index(selected_function) if selected_function in function_names else 0),
-                        key=f"{_cfg_function_row_id_key(algo_key)}type-{row_id}",
+                        key=f"{function_row_id_key(algo_key)}type-{row_id}",
                     )
 
                 row["name"] = name_value.strip()
@@ -83,7 +81,7 @@ def render_functions_panel(
                     for param_idx, param in enumerate(function_spec.parameters):
                         with columns[param_idx % 3]:
                             with st.container(border=True):
-                                input_key = f"{_cfg_function_row_id_key(algo_key)}param-{row_id}-{param.name}"
+                                input_key = f"{function_row_id_key(algo_key)}param-{row_id}-{param.name}"
                                 param_context = f"{display_name} ({function_spec.cls.__name__}), parameter {param.name}"
                                 if param.param_type == "float":
                                     default_text = float_text_default(slot_params.get(param.name, param.default))
@@ -166,7 +164,7 @@ def render_functions_panel(
 
                 if len(function_rows) >= 2 and st.button(
                     "Remove",
-                    key=f"{_cfg_function_row_id_key(algo_key)}remove-{row_id}",
+                    key=f"{function_row_id_key(algo_key)}remove-{row_id}",
                 ):
                     remove_row_id = row_id
 
@@ -178,15 +176,15 @@ def render_functions_panel(
     if st.button("Add function", key=f"btn-add-function-{algo_key}"):
         function_rows.append(
             {
-                "id": _cfg_next_function_row_id(algo_key),
-                "name": _cfg_suggest_new_function_name(function_rows),
+                "id": next_function_row_id(algo_key),
+                "name": suggest_new_function_name(function_rows),
                 "function_key": default_function_key,
                 "function_params": {},
             }
         )
         st.rerun()
 
-    function_row_errors = _cfg_validate_function_rows(
+    function_row_errors = validate_function_rows_with_rules(
         function_rows,
         reserved_names=_RUNTIME_RESERVED_NAMES,
         valid_function_keys=function_names,
