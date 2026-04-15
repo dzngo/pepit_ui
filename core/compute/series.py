@@ -255,12 +255,11 @@ def build_dual_section_html(
         normalized = (score - min_score) / spread
         bg = jet_color(normalized)
         fg = text_color_for_bg(bg)
-        value = current_duals.get(constraint, {}).get(dual_key)
         dual_id = _dual_series_id(constraint, dual_key)
         selected_ids.append(dual_id)
         dual_label = _format_dual_key_label(dual_key)
         dual_title = f"{constraint} | {dual_key}"
-        ranking_legend = f"ranking: {score:.4g}, value: {format_dual_value(value)}"
+        ranking_legend = f"ranking score: {score:.4g}"
         rows.append(
             f"<button type='button' class='dual-button'"
             f" data-series-id='{html_escape(dual_id)}'"

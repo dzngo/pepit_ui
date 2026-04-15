@@ -85,6 +85,9 @@
       if (ctx.tabPanelRecompute) ctx.tabPanelRecompute.hidden = ctx.actionTab !== "recompute";
       syncDualButtonState();
       updateClearButton();
+      updateRemoveButtonsLabel();
+      // Keep rendered plots in sync with active tab semantics.
+      plotSelected();
     }
 
     function updateClearButton() {
@@ -104,6 +107,13 @@
       const display = hasSelection ? "inline-flex" : "none";
       ctx.removeButtonsByParam.forEach((btn) => {
         if (btn) btn.style.display = display;
+      });
+    }
+
+    function updateRemoveButtonsLabel() {
+      const label = ctx.actionTab === "recompute" ? "Deactivate selected dual values" : "Remove selected dual values";
+      ctx.removeButtonsByParam.forEach((btn) => {
+        if (btn) btn.textContent = label;
       });
     }
 
@@ -291,12 +301,28 @@
       seriesIds.forEach((seriesId) => {
         if (ctx.plotSelectionMap.has(seriesId)) ctx.plotSelectionMap.delete(seriesId);
       });
+      syncDualButtonState();
       ctx.selectedPlotCards.forEach((setRef) => setRef.clear());
       updateDeactivatedList();
       updateClearButton();
       clearDualPlots();
       plotSelected();
       updateRemoveButtons();
+    }
+
+    function deactivateSelectedSeries(seriesIds) {
+      if (!seriesIds || !seriesIds.size) return;
+      seriesIds.forEach((seriesId) => {
+        if (ctx.deactivatedForRecompute.has(seriesId)) return;
+        const generic = ctx.seriesDataByParam[seriesId];
+        const label = (generic && generic.label) || seriesId;
+        ctx.deactivatedForRecompute.set(seriesId, label);
+      });
+      ctx.selectedPlotCards.forEach((setRef) => setRef.clear());
+      updateDeactivatedList();
+      syncDualButtonState();
+      updateRemoveButtons();
+      plotSelected();
     }
 
     function baseSeriesForParam(seriesId, paramName) {
@@ -337,7 +363,10 @@
 
     function plotSelected() {
       const plotGridsByParam = new Map(ctx.dualParams.map((param) => [param, ctx.root.querySelector(`#dual-plot-${ctx.sanitizeId(param)}`)]));
-      const seriesIds = Array.from(ctx.plotSelectionMap.keys());
+      const seriesIds = Array.from(ctx.plotSelectionMap.keys()).filter((seriesId) => {
+        if (ctx.actionTab !== "recompute") return true;
+        return !ctx.deactivatedForRecompute.has(seriesId);
+      });
       plotGridsByParam.forEach((grid) => {
         if (grid) grid.innerHTML = "";
       });
@@ -464,6 +493,7 @@
       toggleRunVisibility,
       clearDualPlots,
       removeSelectedSeries,
+      deactivateSelectedSeries,
       applyZeroFilter,
       plotSelected,
     };

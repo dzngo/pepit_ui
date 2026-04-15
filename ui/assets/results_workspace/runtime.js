@@ -247,6 +247,7 @@ function renderResultsWorkspaceRuntime(component) {
         if (!ctx.deactivatedForRecompute.has(seriesId)) ctx.deactivatedForRecompute.set(seriesId, label || "");
         dualCtrl.syncDualButtonState();
         dualCtrl.updateDeactivatedList();
+        ensurePlotly(dualCtrl.plotSelected);
       } else {
         if (ctx.plotSelectionMap.has(seriesId)) ctx.plotSelectionMap.delete(seriesId);
         else ctx.plotSelectionMap.set(seriesId, label || "");
@@ -262,6 +263,7 @@ function renderResultsWorkspaceRuntime(component) {
       ctx.deactivatedForRecompute.delete(seriesId);
       dualCtrl.syncDualButtonState();
       dualCtrl.updateDeactivatedList();
+      ensurePlotly(dualCtrl.plotSelected);
       return;
     }
     if (button.id === "dual-activate-all") {
@@ -270,6 +272,7 @@ function renderResultsWorkspaceRuntime(component) {
       ctx.deactivatedForRecompute.clear();
       dualCtrl.syncDualButtonState();
       dualCtrl.updateDeactivatedList();
+      ensurePlotly(dualCtrl.plotSelected);
       return;
     }
     if (button.id === "dual-deactivate-all") {
@@ -284,6 +287,7 @@ function renderResultsWorkspaceRuntime(component) {
       });
       dualCtrl.syncDualButtonState();
       dualCtrl.updateDeactivatedList();
+      ensurePlotly(dualCtrl.plotSelected);
       return;
     }
     if (button.id === "dual-toggle-zero") {
@@ -333,7 +337,11 @@ function renderResultsWorkspaceRuntime(component) {
       event.preventDefault();
       const selectedIds = new Set();
       ctx.selectedPlotCards.forEach((setRef) => setRef.forEach((id) => selectedIds.add(id)));
-      dualCtrl.removeSelectedSeries(selectedIds);
+      if (ctx.actionTab === "recompute") {
+        dualCtrl.deactivateSelectedSeries(selectedIds);
+      } else {
+        dualCtrl.removeSelectedSeries(selectedIds);
+      }
       return;
     }
     if (button.id === "dual-recompute") {
