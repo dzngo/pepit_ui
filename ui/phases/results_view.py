@@ -7,6 +7,7 @@ from service.results_service import (
     build_results_artifacts,
     handle_results_event,
 )
+from service.workspace_io_service import build_work_checkpoint_bytes
 from ui.components.algorithm_editor import steps_source
 from ui.components.results_panel import render_dual_values_panel
 from ui.state.state_utils import (
@@ -19,6 +20,25 @@ from ui.state.state_utils import (
 
 
 def render_results_phase(algo_key: str, spec):
+    st.markdown(
+        """
+        <style>
+        [class*="st-key-btn-save-work-"] button {
+          background-color: #2e7d32;
+          border-color: #2e7d32;
+          color: #ffffff;
+          font-weight: 600;
+          border-radius: 999px;
+        }
+        [class*="st-key-btn-save-work-"] button:hover {
+          background-color: #256628;
+          border-color: #256628;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     settings = st.session_state.get("active_settings")
     if not settings or settings["algo_key"] != algo_key:
         st.session_state["ui_phase"] = "config"
@@ -202,6 +222,20 @@ def render_results_phase(algo_key: str, spec):
                         deactivated_labels=outcome["deactivated_labels"],
                     )
                 st.rerun()
+
+    st.divider()
+    try:
+        payload_bytes, filename = build_work_checkpoint_bytes(st.session_state, algo_key=algo_key)
+    except Exception as exc:
+        st.error(f"Unable to prepare work export: {exc}")
+    else:
+        st.download_button(
+            "Save work",
+            data=payload_bytes,
+            file_name=filename,
+            mime="application/octet-stream",
+            key=f"btn-save-work-{algo_key}",
+        )
 
 
 __all__ = ["render_results_phase"]

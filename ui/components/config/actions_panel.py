@@ -12,6 +12,7 @@ from service.config_service import (
     build_steps_test_context,
     collect_config_errors,
 )
+from service.workspace_io_service import load_work_checkpoint
 from ui.components.algorithm_editor import run_steps_smoke_test
 from ui.state.config_state import build_function_config
 from ui.state.state_utils import algo_state_key
@@ -54,7 +55,34 @@ def handle_plot_action(
     function_param_errors: list[str],
     function_row_errors: list[str],
 ) -> None:
+    load_panel_state_key = f"show-load-work-panel-{algo_key}"
+    st.session_state.setdefault(load_panel_state_key, False)
     plot_clicked = st.button("Plot", key="btn-plot-config")
+
+    load_work_clicked = st.button("Load work", key="btn-load-work-config")
+    if load_work_clicked:
+        st.session_state[load_panel_state_key] = not bool(st.session_state.get(load_panel_state_key, False))
+
+    if bool(st.session_state.get(load_panel_state_key, False)):
+        uploaded = st.file_uploader(
+            "Load work file",
+            type=["bin", "pkl", "pepit-work"],
+            key="load-work-file",
+            width=200,
+            label_visibility="collapsed",
+        )
+        load_clicked = st.button("Load", key="btn-load-config", disabled=uploaded is None)
+        if load_clicked:
+            if uploaded is None:
+                st.error("Please choose a work file first.")
+                return
+            ok, message = load_work_checkpoint(st.session_state, payload_bytes=uploaded.getvalue())
+            if not ok:
+                st.error(f"Load failed: {message}")
+                return
+            st.success(message)
+            st.rerun()
+
     if not plot_clicked:
         return
 

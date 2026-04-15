@@ -23,6 +23,11 @@ from .results_service import (
     handle_results_event,
     prepare_recompute_event,
 )
+from .workspace_io_service import (
+    WORKSPACE_FILE_VERSION,
+    build_work_checkpoint_bytes,
+    load_work_checkpoint,
+)
 
 __all__ = [
     "build_pending_settings",
@@ -44,4 +49,7 @@ __all__ = [
     "progress_from_state",
     "run_loading_batch",
     "ComputeRequest",
+    "build_work_checkpoint_bytes",
+    "load_work_checkpoint",
+    "WORKSPACE_FILE_VERSION",
 ]

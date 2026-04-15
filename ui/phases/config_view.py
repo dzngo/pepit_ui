@@ -15,6 +15,9 @@ from ui.state.config_state import build_function_config
 
 
 def render_config_phase(algo_key: str, spec: AlgorithmSpec):
+    if "loaded_rerun_nan_caches" in st.session_state:
+        st.session_state["rerun_nan_caches"] = bool(st.session_state.pop("loaded_rerun_nan_caches"))
+
     css_path = Path(__file__).resolve().parents[1] / "assets" / "config_panel" / "config_panel.css"
     if css_path.exists():
         st.markdown(f"<style>{css_path.read_text()}</style>", unsafe_allow_html=True)

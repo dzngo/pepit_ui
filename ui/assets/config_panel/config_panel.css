@@ -1,18 +1,17 @@
-
 .st-key-btn-save-config button,
 .st-key-btn-test-config button,
 .st-key-btn-cancel-config button,
 .st-key-btn-remove-config button,
 .st-key-btn-plot-config button,
-.st-key-btn-customize-config button {
+.st-key-btn-customize-config button,
+.st-key-btn-load-work-config button,
+.st-key-btn-load-config button {
   font-weight: 600;
   padding: 0px 20px;
   border-radius: 999px;
   cursor: pointer;
   border: 1px solid transparent;
-
 }
-
 
 .st-key-btn-save-config button {
   background-color: #2e7d32;
@@ -34,6 +33,28 @@
 .st-key-btn-test-config button:hover {
   background-color: #155fa8;
   border-color: #155fa8;
+}
+
+.st-key-btn-load-work-config button {
+  background-color: #1976d2;
+  border-color: #1976d2;
+  color: #ffffff;
+}
+
+.st-key-btn-load-work-config button:hover {
+  background-color: #155fa8;
+  border-color: #155fa8;
+}
+
+.st-key-btn-load-config button {
+  background-color: #2e7d32;
+  border-color: #2e7d32;
+  color: #ffffff;
+}
+
+.st-key-btn-load-config button:hover {
+  background-color: #256628;
+  border-color: #256628;
 }
 
 .st-key-btn-cancel-config button {
