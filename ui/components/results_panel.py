@@ -5,15 +5,35 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v2 as components_v2
 
-ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets" / "dual_panel"
-DUAL_PANEL_CSS = (ASSETS_DIR / "dual_panel.css").read_text()
-DUAL_PANEL_JS = (ASSETS_DIR / "dual_panel.js").read_text()
+ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
+RESULTS_WORKSPACE_DIR = ASSETS_DIR / "results_workspace"
 
 
-DUAL_PANEL_COMPONENT = components_v2.component(
-    "dual_panel_component_v2",
-    html="<div id='dual-panel-v2-root'></div>",
-    js=DUAL_PANEL_JS,
+def _assemble_results_workspace_js() -> str:
+    # No-build bundle assembly: concatenate feature modules in dependency order.
+    ordered_files = [
+        "constants.js",
+        "payload.js",
+        "state.js",
+        "legend.js",
+        "layout.js",
+        "events.js",
+        "tau_plots.js",
+        "dual_plots.js",
+        "runtime.js",
+        "index.js",
+    ]
+    return "\n\n".join((RESULTS_WORKSPACE_DIR / name).read_text() for name in ordered_files)
+
+
+RESULTS_WORKSPACE_CSS = (RESULTS_WORKSPACE_DIR / "results_workspace.css").read_text()
+RESULTS_WORKSPACE_JS = _assemble_results_workspace_js()
+
+
+RESULTS_WORKSPACE_COMPONENT = components_v2.component(
+    "results_workspace_component_v1",
+    html="<div id='results-workspace-root'></div>",
+    js=RESULTS_WORKSPACE_JS,
 )
 
 
@@ -79,7 +99,7 @@ def render_dual_values_panel(
             }
         )
     payload = {
-        "css": DUAL_PANEL_CSS,
+        "css": RESULTS_WORKSPACE_CSS,
         "tau_payload": tau_payload,
         "series_data_by_param": tau_payload.get("series_data_by_param", {}),
         "dual_runs": dual_runs_data,
@@ -87,8 +107,8 @@ def render_dual_values_panel(
         "metric": metric,
         "metric_labels": metric_labels,
     }
-    result = DUAL_PANEL_COMPONENT(
-        key=f"dual-panel-{algo_key}",
+    result = RESULTS_WORKSPACE_COMPONENT(
+        key=f"results-workspace-{algo_key}",
         data=_json_safe(payload),
         height="content",
         isolate_styles=False,
