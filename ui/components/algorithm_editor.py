@@ -94,6 +94,10 @@ def render_steps_editor(
             st.session_state[code_key] = updated
         primitive_steps = list_supported_primitive_steps()
         st.caption("Algorithm body can directly use configured function/hyperparameter names.")
+        st.caption(
+            "Function parameters are also injected as alias-scoped names (e.g. `f_L`) "
+            "and via `func_params` (e.g. `func_params['f']['L']`)."
+        )
         with st.expander("Supported primitive steps", expanded=False):
             if primitive_steps:
                 tags_html = "".join(
