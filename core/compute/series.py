@@ -43,14 +43,6 @@ def html_escape(value: str) -> str:
     return html.escape(str(value), quote=True)
 
 
-def format_dual_value(value: float | None) -> str:
-    if value is None:
-        return "N/A"
-    if isinstance(value, float) and not np.isfinite(value):
-        return "N/A"
-    return f"{value:.6g}"
-
-
 def build_tau_series_by_param(
     hyperparameter_specs: list[HyperparameterSpec],
     param_values: dict[str, np.ndarray],

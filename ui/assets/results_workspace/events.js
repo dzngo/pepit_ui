@@ -1,17 +1,6 @@
 (() => {
   const ns = (globalThis.__resultsWorkspace = globalThis.__resultsWorkspace || {});
 
-  /**
-   * Event envelope emitted to Streamlit component:
-   * - { cursor: {...} }
-   * - { metric: {...} }
-   * - { remove_run: {...} }
-   * - { recompute: {...} }
-   */
-  ns.emitComponentEvent = function emitComponentEvent(setTriggerValue, payload) {
-    setTriggerValue(payload);
-  };
-
   ns.events = {
     createCursorEmitter({ setTriggerValue, getCursor, getLocalByAxis, getPatterns }) {
       let lastCursorEventKey = JSON.stringify({
