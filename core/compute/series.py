@@ -276,7 +276,7 @@ def _format_dual_key_label(text: str) -> str:
     if "|" not in text:
         return _subscript_to_html(text)
     left, right = text.split("|", 1)
-    return f"{html_escape(left.strip())} | {_subscript_to_html(right.strip())}"
+    return f"{_subscript_to_html(left.strip())} | {_subscript_to_html(right.strip())}"
 
 
 def _subscript_to_html(text: str) -> str:
@@ -284,8 +284,25 @@ def _subscript_to_html(text: str) -> str:
         return ""
     out = []
     i = 0
+
+    def is_boundary(idx: int) -> bool:
+        return idx < 0 or idx >= len(text) or not re.match(r"[A-Za-z0-9]", text[idx])
+
     while i < len(text):
         if text[i] != "_":
+            if (
+                re.match(r"[A-Za-z]", text[i])
+                and i + 1 < len(text)
+                and re.match(r"[0-9*]", text[i + 1])
+                and is_boundary(i - 1)
+            ):
+                j = i + 1
+                while j < len(text) and re.match(r"[0-9*]", text[j]):
+                    j += 1
+                if is_boundary(j):
+                    out.append(f"{html_escape(text[i])}<sub>{html_escape(text[i + 1:j])}</sub>")
+                    i = j
+                    continue
             out.append(html_escape(text[i]))
             i += 1
             continue

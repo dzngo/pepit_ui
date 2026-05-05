@@ -10,9 +10,19 @@
     const value = String(text);
     let out = "";
     let i = 0;
+    const isBoundary = (idx) => idx < 0 || idx >= value.length || !/[a-zA-Z0-9]/.test(value[idx]);
     while (i < value.length) {
       const ch = value[i];
       if (ch !== "_") {
+        if (/[a-zA-Z]/.test(ch) && i + 1 < value.length && /[0-9*]/.test(value[i + 1]) && isBoundary(i - 1)) {
+          let end = i + 1;
+          while (end < value.length && /[0-9*]/.test(value[end])) end += 1;
+          if (isBoundary(end)) {
+            out += `${ns.escapeHtml(ch)}<sub>${ns.escapeHtml(value.slice(i + 1, end))}</sub>`;
+            i = end;
+            continue;
+          }
+        }
         out += ns.escapeHtml(ch);
         i += 1;
         continue;
@@ -53,7 +63,10 @@
     if (splitIndex !== -1) {
       const left = value.slice(0, splitIndex);
       const right = value.slice(splitIndex + separator.length);
-      return `${ns.escapeHtml(left)}${separator}${ns.formatSubscriptText(right)}`;
+      const leftHtml = /^\s*[a-zA-Z](?:_?\{?[a-zA-Z0-9*]+\}?|[0-9*]+)\s*$/.test(left)
+        ? ns.formatSubscriptText(left)
+        : ns.escapeHtml(left);
+      return `${leftHtml}${separator}${ns.formatSubscriptText(right)}`;
     }
     return ns.formatSubscriptText(value);
   };

@@ -4,6 +4,7 @@
   --dual-button-min-width: 70px;
   --dual-button-max-width: 100px;
   --dual-plot-min-width: 220px;
+  --dual-sticky-top: 64px;
 }
 .dual-wrapper {
   display: flex;
@@ -32,7 +33,8 @@
 }
 .dual-rail-sticky {
   position: sticky;
-  top: 12px;
+  top: var(--dual-sticky-top);
+  max-height: calc(100vh - var(--dual-sticky-top) - 12px);
   overflow: auto;
 }
 .dual-rail-title {
@@ -177,6 +179,10 @@
 }
 .dual-recompute-actions {
   margin-top: 8px;
+}
+.dual-recompute-divider {
+  width: 100%;
+  border-top: 1px solid rgba(49, 51, 63, 0.14);
 }
 .dual-mode-panel {
   border: 1px solid rgba(49, 51, 63, 0.18);

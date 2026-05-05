@@ -173,6 +173,7 @@ function renderResultsWorkspaceRuntime(component) {
             <div id="tab-panel-recompute" class="dual-mode-toolbar dual-mode-toolbar-stacked" role="tabpanel" aria-labelledby="tab-recompute" hidden>
               <div class="dual-selected-header"><div class="dual-selected-title">Deactivated dual values</div></div>
               <div id="dual-deactivated-list" class="dual-selected-list">None</div>
+              <div class="dual-recompute-divider" aria-hidden="true"></div>
               <div class="dual-plot-actions dual-plot-actions-inline dual-recompute-actions">
                 <button type="button" class="dual-plot-button" id="dual-recompute" disabled>Recompute without selected duals</button>
                 <button type="button" class="dual-clear-button" id="dual-activate-all">Reactivate all</button>
