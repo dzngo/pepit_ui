@@ -2,12 +2,70 @@
   const ns = (globalThis.__resultsWorkspace = globalThis.__resultsWorkspace || {});
 
   function createDualController(ctx, tauCtrl) {
+    function constraintFromLabel(label) {
+      const value = String(label || "");
+      const splitIndex = value.indexOf(" | ");
+      return splitIndex === -1 ? "Other" : value.slice(0, splitIndex) || "Other";
+    }
+
+    function constraintForButton(button) {
+      const seriesId = button.getAttribute("data-series-id");
+      const generic = seriesId ? ctx.seriesDataByParam[seriesId] : null;
+      return (generic && generic.constraint) || constraintFromLabel(button.getAttribute("data-label"));
+    }
+
+    function groupedDualSectionHtml(param, sectionHtml) {
+      const template = document.createElement("template");
+      template.innerHTML = String(sectionHtml || "").trim();
+      const sourceSection = template.content.querySelector("section");
+      if (!sourceSection) return sectionHtml || "";
+
+      const buttons = Array.from(sourceSection.querySelectorAll(".dual-button"));
+      const titleEl = sourceSection.querySelector("h4");
+      const titleHtml = titleEl ? titleEl.innerHTML : ctx.escapeHtml(ctx.plotTitlesByParam[param] || `Ranking vs ${param}`);
+      const sectionId = sourceSection.getAttribute("id") || "";
+      const sectionKey = sourceSection.getAttribute("data-section-key") || param;
+      if (!buttons.length) {
+        const emptyEl = sourceSection.querySelector(".dual-empty");
+        const emptyHtml = emptyEl ? emptyEl.outerHTML : "<p class='dual-empty'>No dual variables detected.</p>";
+        return (
+          `<section id="${ctx.escapeHtml(sectionId)}" class="dual-section" data-section-key="${ctx.escapeHtml(sectionKey)}">` +
+          `<h4>${titleHtml}</h4>${emptyHtml}</section>`
+        );
+      }
+
+      const grouped = new Map();
+      buttons.forEach((button) => {
+        const constraint = constraintForButton(button);
+        if (!grouped.has(constraint)) grouped.set(constraint, []);
+        grouped.get(constraint).push(button.outerHTML);
+      });
+
+      const groupsHtml = Array.from(grouped.entries())
+        .map(([constraint, groupButtons]) => (
+          `<div class="dual-constraint-group">` +
+          `<div class="dual-constraint-title">` +
+          `<span>${ctx.escapeHtml(constraint)}</span>` +
+          `</div>` +
+          `<div class="dual-grid">${groupButtons.join("")}</div>` +
+          `</div>`
+        ))
+        .join("");
+
+      return (
+        `<section id="${ctx.escapeHtml(sectionId)}" class="dual-section" data-section-key="${ctx.escapeHtml(sectionKey)}">` +
+        `<h4>${titleHtml}</h4>` +
+        `<div class="dual-constraint-list">${groupsHtml}</div>` +
+        `</section>`
+      );
+    }
+
     function dualSectionsHtml() {
       if (!ctx.dualParams.length) return "";
       return ctx.dualParams
         .map((param) => {
           const sectionHtml = ctx.sectionsHtmlByParam[param] || "";
-          return `<div class="dual-panel"><div class="dual-section" data-param-section="${ctx.escapeHtml(param)}">${sectionHtml}</div></div>`;
+          return `<div class="dual-panel" data-param-section="${ctx.escapeHtml(param)}">${groupedDualSectionHtml(param, sectionHtml)}</div>`;
         })
         .join("");
     }
@@ -38,33 +96,100 @@
       return Array.from(ctx.root.querySelectorAll(".dual-button:not(.is-hidden)"));
     }
 
+    function visibleSeriesIds() {
+      return new Set(visibleButtonsForPlot().map((btn) => btn.getAttribute("data-series-id")).filter(Boolean));
+    }
+
+    function selectedPlotCount() {
+      const visibleSeries = visibleSeriesIds();
+      return Array.from(visibleSeries).filter((id) => ctx.plotSelectionMap.has(id)).length;
+    }
+
+    function sourceButtonForSeries(seriesId) {
+      return Array.from(ctx.root.querySelectorAll(".dual-button")).find(
+        (btn) => btn.getAttribute("data-series-id") === seriesId
+      );
+    }
+
+    function deactivatedLabel(entry) {
+      if (entry && typeof entry === "object") return entry.label || "";
+      return String(entry || "");
+    }
+
+    function deactivatedLabels() {
+      return Array.from(ctx.deactivatedForRecompute.values()).map(deactivatedLabel);
+    }
+
+    function deactivatedEntry(seriesId, label, sourceButton) {
+      const button = sourceButton || sourceButtonForSeries(seriesId);
+      const bg = button && button.style ? button.style.background : "";
+      const color = button && button.style ? button.style.color : "";
+      return {
+        label: label || "",
+        bg: bg || "",
+        color: color || "",
+      };
+    }
+
+    function deactivatedBadgeStyle(entry) {
+      if (!entry || typeof entry !== "object" || !entry.bg) return "";
+      const color = entry.color || "#ffffff";
+      return ` style="background:${ctx.escapeHtml(entry.bg)};border-color:${ctx.escapeHtml(entry.bg)};color:${ctx.escapeHtml(color)};"`;
+    }
+
+    function setDeactivatedSeries(seriesId, label, sourceButton) {
+      ctx.deactivatedForRecompute.set(seriesId, deactivatedEntry(seriesId, label, sourceButton));
+    }
+
+    function updateModeSummary() {
+      const isRecompute = ctx.actionTab === "recompute";
+      const deactivatedCount = ctx.deactivatedForRecompute.size;
+      const plotCount = selectedPlotCount();
+      if (ctx.modeTitle) ctx.modeTitle.textContent = isRecompute ? "Prepare recompute" : "Explore plots";
+      if (ctx.modeDescription) {
+        ctx.modeDescription.textContent = isRecompute
+          ? "Click dual buttons above to deactivate them, then click them in the list below to reactivate them."
+          : "Select dual values to inspect their curves.";
+      }
+      if (ctx.modeCount) {
+        ctx.modeCount.textContent = isRecompute ? `${deactivatedCount} deactivated` : `${plotCount} selected`;
+      }
+      if (ctx.plotBtn) ctx.plotBtn.disabled = plotCount === 0;
+      if (ctx.recomputeBtn) ctx.recomputeBtn.disabled = deactivatedCount === 0;
+    }
+
     function updateDeactivatedList() {
       if (!ctx.deactivatedListEl) return;
       if (!ctx.deactivatedForRecompute.size) {
         ctx.deactivatedListEl.textContent = "None";
         if (ctx.recomputeBtn) {
           ctx.recomputeBtn.disabled = true;
-          ctx.recomputeBtn.style.display = "none";
         }
+        updateModeSummary();
         return;
       }
       ctx.deactivatedListEl.innerHTML = Array.from(ctx.deactivatedForRecompute.entries())
-        .map(([seriesId, label]) => `<button type="button" class="dual-badge dual-reactivate-button" data-series-id="${ctx.escapeHtml(seriesId)}">${ctx.formatDualLabel(label)}</button>`)
+        .map(([seriesId, entry]) => {
+          const label = deactivatedLabel(entry);
+          return `<button type="button" class="dual-badge dual-reactivate-button" data-series-id="${ctx.escapeHtml(seriesId)}"${deactivatedBadgeStyle(entry)}>${ctx.formatDualLabel(label)}</button>`;
+        })
         .join("");
       if (ctx.recomputeBtn) {
         ctx.recomputeBtn.disabled = false;
-        ctx.recomputeBtn.style.display = "inline-flex";
       }
+      updateModeSummary();
     }
 
     function syncDualButtonState() {
       ctx.root.querySelectorAll(".dual-button").forEach((btn) => {
         const seriesId = btn.getAttribute("data-series-id");
-        const hideByTab = ctx.actionTab === "recompute" && ctx.deactivatedForRecompute.has(seriesId);
+        const deactivated = ctx.deactivatedForRecompute.has(seriesId);
         const selectedForPlot = ctx.actionTab === "plot" && ctx.plotSelectionMap.has(seriesId);
         btn.classList.toggle("is-clicked", selectedForPlot);
-        btn.classList.toggle("is-recompute-hidden", hideByTab);
+        btn.classList.toggle("is-deactivated", deactivated);
+        btn.setAttribute("aria-pressed", selectedForPlot || deactivated ? "true" : "false");
       });
+      updateModeSummary();
     }
 
     function setActionTab(nextTab) {
@@ -86,6 +211,7 @@
       syncDualButtonState();
       updateClearButton();
       updateRemoveButtonsLabel();
+      updateModeSummary();
       // Keep rendered plots in sync with active tab semantics.
       plotSelected();
     }
@@ -95,11 +221,15 @@
       const buttons = visibleButtonsForPlot();
       if (!buttons.length) {
         ctx.clearBtn.textContent = "Select all";
+        ctx.clearBtn.disabled = true;
+        updateModeSummary();
         return;
       }
       const visibleSeries = new Set(buttons.map((btn) => btn.getAttribute("data-series-id")));
       const allSelected = Array.from(visibleSeries).every((id) => ctx.plotSelectionMap.has(id));
       ctx.clearBtn.textContent = allSelected ? "Deselect all" : "Select all";
+      ctx.clearBtn.disabled = false;
+      updateModeSummary();
     }
 
     function updateRemoveButtons() {
@@ -111,7 +241,7 @@
     }
 
     function updateRemoveButtonsLabel() {
-      const label = ctx.actionTab === "recompute" ? "Deactivate selected dual values" : "Remove selected dual values";
+      const label = ctx.actionTab === "recompute" ? "Deactivate selected plotted duals" : "Remove selected plotted duals";
       ctx.removeButtonsByParam.forEach((btn) => {
         if (btn) btn.textContent = label;
       });
@@ -316,7 +446,7 @@
         if (ctx.deactivatedForRecompute.has(seriesId)) return;
         const generic = ctx.seriesDataByParam[seriesId];
         const label = (generic && generic.label) || seriesId;
-        ctx.deactivatedForRecompute.set(seriesId, label);
+        setDeactivatedSeries(seriesId, label);
       });
       ctx.selectedPlotCards.forEach((setRef) => setRef.clear());
       updateDeactivatedList();
@@ -355,6 +485,11 @@
         } else {
           btn.classList.remove("is-hidden");
         }
+      });
+      ctx.root.querySelectorAll(".dual-constraint-group").forEach((group) => {
+        const buttons = Array.from(group.querySelectorAll(".dual-button"));
+        const hasVisibleButton = buttons.some((btn) => !btn.classList.contains("is-hidden"));
+        group.classList.toggle("is-empty", !hasVisibleButton);
       });
       updateDeactivatedList();
       syncDualButtonState();
@@ -496,6 +631,8 @@
       deactivateSelectedSeries,
       applyZeroFilter,
       plotSelected,
+      deactivatedLabels,
+      setDeactivatedSeries,
     };
   }
 

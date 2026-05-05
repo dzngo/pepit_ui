@@ -145,32 +145,39 @@ function renderResultsWorkspaceRuntime(component) {
           <div class="dual-section-title">Worst-case guarantee</div>
           <div class="tau-panels-grid">${tauCtrl.tauPanelsHtml()}</div>
           <div class="dual-section-title">Dual values</div>
-          <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;">
-            <div style="display:flex;align-items:center;gap:10px;">
-              <label for="dual-ranking-metric" style="font-weight:600;">Ranking metric</label>
-              <select id="dual-ranking-metric" style="width:280px;max-width:100%;padding:8px 10px;border-radius:8px;border:1px solid rgba(49,51,63,0.2);">${metricOptionsHtml()}</select>
+          <div class="dual-control-bar">
+            <div class="dual-control-row">
+              <label class="dual-control-label" for="dual-ranking-metric">Ranking metric</label>
+              <select id="dual-ranking-metric" class="dual-ranking-select">${metricOptionsHtml()}</select>
               <button type="button" class="dual-toggle-button is-active" id="dual-toggle-zero">Show all-zero duals</button>
             </div>
           </div>
           ${dualCtrl.dualSectionsHtml()}
-          <div class="dual-tabs" role="tablist" aria-label="Dual action tabs">
-            <button type="button" class="dual-tab is-active" id="tab-plot" role="tab" aria-selected="true" aria-controls="tab-panel-plot">Plot</button>
-            <button type="button" class="dual-tab" id="tab-recompute" role="tab" aria-selected="false" aria-controls="tab-panel-recompute" tabindex="-1">Recompute</button>
-          </div>
-          <div id="tab-panel-plot" class="dual-tabpanel" role="tabpanel" aria-labelledby="tab-plot">
-            <div class="dual-plot-actions">
-              <button type="button" class="dual-plot-button" id="dual-plot">Plot dual values</button>
+          <div class="dual-mode-panel">
+            <div class="dual-mode-topline">
+              <div class="dual-mode-switch" role="tablist" aria-label="Dual interaction mode">
+                <button type="button" class="dual-mode-option is-active" id="tab-plot" role="tab" aria-selected="true" aria-controls="tab-panel-plot">Explore plots</button>
+                <button type="button" class="dual-mode-option" id="tab-recompute" role="tab" aria-selected="false" aria-controls="tab-panel-recompute" tabindex="-1">Prepare recompute</button>
+              </div>
+              <div class="dual-mode-meta">
+                <div id="dual-mode-title" class="dual-mode-title">Explore plots</div>
+                <div id="dual-mode-description" class="dual-mode-description">Select dual values to inspect their curves.</div>
+              </div>
+              <div id="dual-mode-count" class="dual-mode-count">0 selected</div>
+            </div>
+            <div id="tab-panel-plot" class="dual-mode-toolbar" role="tabpanel" aria-labelledby="tab-plot">
+              <button type="button" class="dual-plot-button" id="dual-plot" disabled>Plot selected</button>
               <button type="button" class="dual-overlay-button" id="dual-overlay" style="display:none;">Overlay plot</button>
               <button type="button" class="dual-clear-button" id="dual-clear">Select all</button>
             </div>
-          </div>
-          <div id="tab-panel-recompute" class="dual-tabpanel" role="tabpanel" aria-labelledby="tab-recompute" hidden>
-            <div class="dual-selected-header"><div class="dual-selected-title">Deactivated dual values</div></div>
-            <div id="dual-deactivated-list" class="dual-selected-list">None</div>
-            <div class="dual-plot-actions dual-plot-actions-inline dual-recompute-actions">
-              <button type="button" class="dual-plot-button" id="dual-recompute" disabled>Recompute</button>
-              <button type="button" class="dual-clear-button" id="dual-activate-all">Activate all</button>
-              <button type="button" class="dual-toggle-button is-active" id="dual-deactivate-all">Deactivate all</button>
+            <div id="tab-panel-recompute" class="dual-mode-toolbar dual-mode-toolbar-stacked" role="tabpanel" aria-labelledby="tab-recompute" hidden>
+              <div class="dual-selected-header"><div class="dual-selected-title">Deactivated dual values</div></div>
+              <div id="dual-deactivated-list" class="dual-selected-list">None</div>
+              <div class="dual-plot-actions dual-plot-actions-inline dual-recompute-actions">
+                <button type="button" class="dual-plot-button" id="dual-recompute" disabled>Recompute without selected duals</button>
+                <button type="button" class="dual-clear-button" id="dual-activate-all">Reactivate all</button>
+                <button type="button" class="dual-toggle-button is-active" id="dual-deactivate-all">Deactivate visible duals</button>
+              </div>
             </div>
           </div>
           ${dualCtrl.dualPlotsHtml()}
@@ -188,6 +195,9 @@ function renderResultsWorkspaceRuntime(component) {
   ctx.tabRecomputeBtn = ctx.root.querySelector("#tab-recompute");
   ctx.tabPanelPlot = ctx.root.querySelector("#tab-panel-plot");
   ctx.tabPanelRecompute = ctx.root.querySelector("#tab-panel-recompute");
+  ctx.modeTitle = ctx.root.querySelector("#dual-mode-title");
+  ctx.modeDescription = ctx.root.querySelector("#dual-mode-description");
+  ctx.modeCount = ctx.root.querySelector("#dual-mode-count");
   ctx.plotBtn = ctx.root.querySelector("#dual-plot");
   ctx.overlayBtn = ctx.root.querySelector("#dual-overlay");
   ctx.clearBtn = ctx.root.querySelector("#dual-clear");
@@ -244,7 +254,8 @@ function renderResultsWorkspaceRuntime(component) {
       const label = button.getAttribute("data-label");
       if (!seriesId) return;
       if (ctx.actionTab === "recompute") {
-        if (!ctx.deactivatedForRecompute.has(seriesId)) ctx.deactivatedForRecompute.set(seriesId, label || "");
+        if (ctx.deactivatedForRecompute.has(seriesId)) ctx.deactivatedForRecompute.delete(seriesId);
+        else dualCtrl.setDeactivatedSeries(seriesId, label || "", button);
         dualCtrl.syncDualButtonState();
         dualCtrl.updateDeactivatedList();
         ensurePlotly(dualCtrl.plotSelected);
@@ -283,7 +294,7 @@ function renderResultsWorkspaceRuntime(component) {
         const seriesId = btn.getAttribute("data-series-id");
         const label = btn.getAttribute("data-label");
         if (!seriesId) return;
-        if (!ctx.deactivatedForRecompute.has(seriesId)) ctx.deactivatedForRecompute.set(seriesId, label || "");
+        if (!ctx.deactivatedForRecompute.has(seriesId)) dualCtrl.setDeactivatedSeries(seriesId, label || "", btn);
       });
       dualCtrl.syncDualButtonState();
       dualCtrl.updateDeactivatedList();
@@ -353,7 +364,7 @@ function renderResultsWorkspaceRuntime(component) {
         request_id: Date.now(),
         selected_series_ids: activeSeriesIds,
         deactivated_series_ids: Array.from(ctx.deactivatedForRecompute.keys()),
-        deactivated_labels: Array.from(ctx.deactivatedForRecompute.values()),
+        deactivated_labels: dualCtrl.deactivatedLabels(),
         local_cursor_indices_by_axis: tauCtrl.currentLocalCursorIndicesByAxis(),
         patterns_by_param: tauCtrl.currentPatternsByParam(),
       });

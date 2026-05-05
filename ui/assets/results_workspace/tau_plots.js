@@ -87,7 +87,7 @@
             `<div class="dual-panel">` +
             `<div class="dual-plot-section">` +
             `${extraLocalSlidersHtml(axisParam)}` +
-            `<div id="tau-plot-${safeAxis}" class="dual-plot-chart" style="min-height:320px;"></div>` +
+            `<div id="tau-plot-${safeAxis}" class="dual-plot-chart tau-plot-chart"></div>` +
             `<div class="tau-global-control">` +
             `<div style="display:flex;align-items:center;gap:8px;">` +
             `<strong>Global ${ctx.escapeHtml(axisParam)}</strong>` +
@@ -97,7 +97,7 @@
             `</div>` +
             `<input class="dual-overlay-input tau-pattern-input" data-param="${ctx.escapeHtml(axisParam)}" type="text" value="${ctx.escapeHtml(patternValue)}" placeholder="${ctx.randomOverlayPlaceholder()}" style="display:block;">` +
             `<div class="tau-pattern-hint" data-param="${ctx.escapeHtml(axisParam)}" style="font-size:12px;color:#666;"></div>` +
-            `<div class="tau-pattern-error" data-param="${ctx.escapeHtml(axisParam)}" style="font-size:12px;color:#cb0000;min-height:16px;"></div>` +
+            `<div class="tau-pattern-error" data-param="${ctx.escapeHtml(axisParam)}"></div>` +
             `</div>` +
             `</div>`
           );
@@ -277,6 +277,7 @@
             title: { text: title },
             xaxis: { title: axisParam },
             yaxis: { title: "tau" },
+            height: 320,
             margin: { t: 40, l: 45, r: 10, b: 35 },
           },
           { displayModeBar: false, responsive: true }
