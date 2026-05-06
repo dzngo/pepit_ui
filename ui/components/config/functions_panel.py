@@ -94,12 +94,10 @@ def render_functions_panel(
                                     )
                                     header_left, header_right = st.columns([5, 2])
                                     with header_right:
-                                        st.caption("Vary")
                                         vary_enabled = st.checkbox(
                                             "Vary",
                                             key=vary_toggle_key,
                                             value=param.name in slot_vary,
-                                            label_visibility="collapsed",
                                         )
                                     default_text = float_text_default(slot_params.get(param.name, param.default))
                                     st.session_state.setdefault(input_key, default_text)
@@ -123,42 +121,30 @@ def render_functions_panel(
                                     if vary_enabled:
                                         vary_prefix = f"{function_row_id_key(algo_key)}vary-{row_id}-{param.name}"
                                         vary_defaults = slot_vary.get(param.name, {})
+                                        base_value = float(parsed_value) if parsed_value is not None else 1.0
                                         min_col, max_col, step_col, default_col, type_col = st.columns(5)
                                         with min_col:
-                                            min_v = st.number_input(
+                                            min_v = st.text_input(
                                                 "min",
-                                                value=float(
-                                                    vary_defaults.get(
-                                                        "min", parsed_value if parsed_value is not None else 0.0
-                                                    )
-                                                ),
+                                                value=str(vary_defaults.get("min", base_value)),
                                                 key=f"{vary_prefix}-min",
                                             )
                                         with max_col:
-                                            max_v = st.number_input(
+                                            max_v = st.text_input(
                                                 "max",
-                                                value=float(
-                                                    vary_defaults.get(
-                                                        "max", parsed_value if parsed_value is not None else 1.0
-                                                    )
-                                                ),
+                                                value=str(vary_defaults.get("max", base_value + 1.0)),
                                                 key=f"{vary_prefix}-max",
                                             )
                                         with step_col:
-                                            step_v = st.number_input(
+                                            step_v = st.text_input(
                                                 "step",
-                                                min_value=1e-12,
-                                                value=float(vary_defaults.get("step", 0.1)),
+                                                value=str(vary_defaults.get("step", 0.1)),
                                                 key=f"{vary_prefix}-step",
                                             )
                                         with default_col:
-                                            default_v = st.number_input(
+                                            default_v = st.text_input(
                                                 "default",
-                                                value=float(
-                                                    vary_defaults.get(
-                                                        "default", parsed_value if parsed_value is not None else min_v
-                                                    )
-                                                ),
+                                                value=str(vary_defaults.get("default", base_value)),
                                                 key=f"{vary_prefix}-default",
                                             )
                                         with type_col:
@@ -171,10 +157,10 @@ def render_functions_panel(
                                                 key=f"{vary_prefix}-type",
                                             )
                                         slot_vary[param.name] = {
-                                            "min": float(min_v),
-                                            "max": float(max_v),
-                                            "step": float(step_v),
-                                            "default": float(default_v),
+                                            "min": min_v,
+                                            "max": max_v,
+                                            "step": step_v,
+                                            "default": default_v,
                                             "value_type": str(vary_type),
                                         }
                                     else:
@@ -187,12 +173,10 @@ def render_functions_panel(
                                     )
                                     header_left, header_right = st.columns([5, 2])
                                     with header_right:
-                                        st.caption("Vary")
                                         vary_enabled = st.checkbox(
                                             "Vary",
                                             key=vary_toggle_key,
                                             value=param.name in slot_vary,
-                                            label_visibility="collapsed",
                                         )
                                     d_value = int(slot_params.get(param.name, 1) or 1)
                                     if not vary_enabled:
@@ -213,32 +197,27 @@ def render_functions_panel(
                                         vary_defaults = slot_vary.get(param.name, {})
                                         min_col, max_col, step_col, default_col, type_col = st.columns(5)
                                         with min_col:
-                                            min_v = st.number_input(
+                                            min_v = st.text_input(
                                                 "min",
-                                                step=1,
-                                                value=int(vary_defaults.get("min", int(d_value))),
+                                                value=str(int(float(vary_defaults.get("min", int(d_value))))),
                                                 key=f"{vary_prefix}-min",
                                             )
                                         with max_col:
-                                            max_v = st.number_input(
+                                            max_v = st.text_input(
                                                 "max",
-                                                step=1,
-                                                value=int(vary_defaults.get("max", int(d_value) + 1)),
+                                                value=str(int(float(vary_defaults.get("max", int(d_value) + 1)))),
                                                 key=f"{vary_prefix}-max",
                                             )
                                         with step_col:
-                                            step_v = st.number_input(
+                                            step_v = st.text_input(
                                                 "step",
-                                                min_value=1,
-                                                step=1,
-                                                value=int(vary_defaults.get("step", 1)),
+                                                value=str(int(float(vary_defaults.get("step", 1)))),
                                                 key=f"{vary_prefix}-step",
                                             )
                                         with default_col:
-                                            default_v = st.number_input(
+                                            default_v = st.text_input(
                                                 "default",
-                                                step=1,
-                                                value=int(vary_defaults.get("default", int(d_value))),
+                                                value=str(int(float(vary_defaults.get("default", int(d_value))))),
                                                 key=f"{vary_prefix}-default",
                                             )
                                         with type_col:
@@ -251,10 +230,10 @@ def render_functions_panel(
                                                 label_visibility="collapsed",
                                             )
                                         slot_vary[param.name] = {
-                                            "min": float(min_v),
-                                            "max": float(max_v),
-                                            "step": float(step_v),
-                                            "default": float(default_v),
+                                            "min": min_v,
+                                            "max": max_v,
+                                            "step": step_v,
+                                            "default": default_v,
                                             "value_type": "int",
                                         }
                                     else:

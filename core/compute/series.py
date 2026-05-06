@@ -48,12 +48,14 @@ def build_tau_series_by_param(
     param_values: dict[str, np.ndarray],
     tau_nd: np.ndarray,
     local_cursor_indices_by_axis: dict[str, dict[str, int]],
+    plot_specs: list[HyperparameterSpec] | None = None,
 ) -> dict[str, dict[str, object]]:
     if not hyperparameter_specs:
         return {}
+    rendered_specs = plot_specs if plot_specs is not None else hyperparameter_specs
     axis_index = {hp.name: idx for idx, hp in enumerate(hyperparameter_specs)}
     series_by_param: dict[str, dict[str, object]] = {}
-    for hp in hyperparameter_specs:
+    for hp in rendered_specs:
         base_indices: list[int] = []
         axis_locals = local_cursor_indices_by_axis.get(hp.name, {})
         for base_hp in hyperparameter_specs:
@@ -114,9 +116,11 @@ def build_dual_series_by_param(
     param_values: dict[str, np.ndarray],
     hyperparameter_specs: list[HyperparameterSpec],
     cursor_indices: dict[str, int],
+    plot_specs: list[HyperparameterSpec] | None = None,
 ) -> dict:
     if not hyperparameter_specs:
         return {}
+    rendered_specs = plot_specs if plot_specs is not None else hyperparameter_specs
     axis_index = {hp.name: idx for idx, hp in enumerate(hyperparameter_specs)}
     base_indices: list[int] = []
     for hp in hyperparameter_specs:
@@ -137,7 +141,7 @@ def build_dual_series_by_param(
     series_data: dict[str, dict] = {}
     for series_id, (constraint, dual_key) in series_meta.items():
         by_param: dict[str, dict[str, object]] = {}
-        for hp in hyperparameter_specs:
+        for hp in rendered_specs:
             axis = axis_index[hp.name]
             x_vals = np.asarray(param_values[hp.name], dtype=float)
             y_vals: list[float | None] = []

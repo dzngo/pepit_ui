@@ -1,6 +1,6 @@
 import streamlit as st
 
-from core.compute import build_pattern_param_values
+from core.compute import build_pattern_param_values, discrete_values
 from infrastructure.compute_runner import run_compute_grid
 from service.results_service import (
     append_recompute_run,
@@ -58,6 +58,7 @@ def render_results_phase(algo_key: str, spec):
 
     _, _, cached_warnings, _ = result
     hyperparameter_specs = list(settings.get("hyperparameter_specs", []))
+    plot_hyperparameter_specs = [hp for hp in hyperparameter_specs if len(discrete_values(hp)) > 1]
     specs_by_name = {hp.name: hp for hp in hyperparameter_specs}
     param_values_map = param_values_by_name(hyperparameter_specs)
 
@@ -126,6 +127,7 @@ def render_results_phase(algo_key: str, spec):
         algo_key=algo_key,
         settings=settings,
         hyperparameter_specs=hyperparameter_specs,
+        plot_hyperparameter_specs=plot_hyperparameter_specs,
         cursor_indices=cursor_indices,
         local_cursor_indices_by_axis=local_cursor_indices_by_axis,
         metric=metric,
@@ -153,7 +155,7 @@ def render_results_phase(algo_key: str, spec):
         run_series_data_by_param,
         tau_payload={
             "tau_series_by_param": tau_series_by_param,
-            "param_order": [hp.name for hp in hyperparameter_specs],
+            "param_order": [hp.name for hp in plot_hyperparameter_specs],
             "param_values_by_name": param_values_map,
             "cursor_indices_by_param": {name: int(idx) for name, idx in cursor_indices.items()},
             "local_cursor_indices_by_axis": {

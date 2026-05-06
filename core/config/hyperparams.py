@@ -26,6 +26,7 @@ def parse_hyperparameter_specs(
     rows: list[dict],
     *,
     reserved_names: Iterable[str],
+    allow_equal_bounds: bool = False,
 ) -> tuple[list[HyperparameterSpec], list[str]]:
     reserved = set(reserved_names)
 
@@ -75,7 +76,10 @@ def parse_hyperparameter_specs(
                 break
         if not numeric_ok:
             continue
-        if numeric["max"] <= numeric["min"]:
+        if numeric["max"] < numeric["min"]:
+            errors.append(f"Hyperparameter row {row_idx}: max must be greater than or equal to min.")
+            continue
+        if numeric["max"] == numeric["min"] and not allow_equal_bounds:
             errors.append(f"Hyperparameter row {row_idx}: max must be greater than min.")
             continue
         if numeric["step"] <= 0:

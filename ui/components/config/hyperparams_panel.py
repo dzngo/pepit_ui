@@ -76,4 +76,5 @@ def render_hyperparameter_editor(algo_key: str, spec: AlgorithmSpec) -> tuple[li
     return parse_hyperparameter_specs(
         edited_rows,
         reserved_names=_HYPERPARAM_RESERVED_NAMES.union(_RUNTIME_RESERVED_NAMES),
+        allow_equal_bounds=True,
     )

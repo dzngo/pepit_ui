@@ -17,12 +17,14 @@ def build_results_artifacts(
     algo_key: str,
     settings: dict,
     hyperparameter_specs: list,
+    plot_hyperparameter_specs: list | None = None,
     cursor_indices: dict[str, int],
     local_cursor_indices_by_axis: dict[str, dict[str, int]],
     metric: str,
     runs: list[dict],
     cached_warnings: tuple[str, ...] | list[str],
 ) -> dict:
+    plot_specs = list(plot_hyperparameter_specs if plot_hyperparameter_specs is not None else hyperparameter_specs)
     warning_messages = set(cached_warnings)
     run_tau_series_by_param: dict[str, dict[str, dict[str, object]]] = {}
     run_series_data_by_param: dict[str, dict] = {}
@@ -46,12 +48,14 @@ def build_results_artifacts(
                 run_param_values,
                 run_tau_nd,
                 local_cursor_indices_by_axis,
+                plot_specs=plot_specs,
             )
             run_series_data_by_param[run["id"]] = build_dual_series_by_param(
                 run_duals_nd,
                 run_param_values,
                 hyperparameter_specs,
                 cursor_indices,
+                plot_specs=plot_specs,
             )
             for warning in run_result[2]:
                 warning_messages.add(f"{run['name']}: {warning}")
@@ -74,12 +78,14 @@ def build_results_artifacts(
             param_values_nd,
             tau_nd,
             local_cursor_indices_by_axis,
+            plot_specs=plot_specs,
         )
         series_data_by_param = build_dual_series_by_param(
             duals_nd,
             param_values_nd,
             hyperparameter_specs,
             cursor_indices,
+            plot_specs=plot_specs,
         )
         axis_index = {hp.name: idx for idx, hp in enumerate(hyperparameter_specs)}
         base_idx = []
@@ -88,7 +94,7 @@ def build_results_artifacts(
             max_idx = max(len(values) - 1, 0)
             base_idx.append(max(0, min(int(cursor_indices.get(hp.name, 0)), max_idx)))
         current_duals = duals_nd[tuple(base_idx)] if hyperparameter_specs else {}
-        for hp in hyperparameter_specs:
+        for hp in plot_specs:
             slice_duals = build_dual_slice_by_param(
                 duals_nd,
                 hyperparameter_specs,
