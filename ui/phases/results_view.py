@@ -111,6 +111,16 @@ def render_results_phase(algo_key: str, spec):
     st.session_state[local_axis_state_key] = local_cursor_indices_by_axis
     st.session_state[pattern_state_key] = patterns_by_param
     base_param_values, invalid_params, conflict_params = build_pattern_param_values(settings["function_config"])
+    for hp in hyperparameter_specs:
+        if "." not in hp.name:
+            continue
+        values = param_values_map.get(hp.name, [])
+        if not values:
+            continue
+        idx = int(cursor_indices.get(hp.name, 0))
+        idx = max(0, min(idx, len(values) - 1))
+        safe_name = hp.name.replace(".", "_")
+        base_param_values[safe_name] = float(values[idx])
     runs = st.session_state.setdefault(algo_state_key("recompute_runs", algo_key), [])
     artifacts = build_results_artifacts(
         algo_key=algo_key,

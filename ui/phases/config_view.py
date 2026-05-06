@@ -25,6 +25,9 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
 
     sections = st.columns(2)
     runtime_param_errors: list[str] = []
+    merged_hyperparameter_specs = []
+    function_vary_errors: list[str] = []
+    function_vary_name_conflicts: list[str] = []
 
     with sections[1]:
         with st.container(border=True):
@@ -34,10 +37,27 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                 st.error(error)
         with st.container(border=True):
             st.write("Functions")
-            (function_names, function_rows, function_param_errors, function_row_errors,) = render_functions_panel(
+            (
+                function_names,
+                function_rows,
+                function_param_errors,
+                function_row_errors,
+                function_vary_specs,
+                function_vary_errors,
+            ) = render_functions_panel(
                 algo_key=algo_key,
                 spec=spec,
             )
+            for error in function_vary_errors:
+                st.error(error)
+            configured_names = {hp.name for hp in hyperparameter_specs}
+            function_vary_name_conflicts = [hp.name for hp in function_vary_specs if hp.name in configured_names]
+            if function_vary_name_conflicts:
+                for name in sorted(set(function_vary_name_conflicts)):
+                    st.error(f"Function vary: duplicate parameter name '{name}'.")
+            merged_hyperparameter_specs = list(hyperparameter_specs) + [
+                hp for hp in function_vary_specs if hp.name not in configured_names
+            ]
 
     with sections[0]:
         with st.container(border=True):
@@ -56,7 +76,7 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
                     function_param_errors=function_param_errors,
                     function_row_errors=function_row_errors,
                     runtime_param_errors=runtime_param_errors,
-                    hyperparameter_specs=hyperparameter_specs,
+                    hyperparameter_specs=merged_hyperparameter_specs,
                     function_rows=function_rows,
                 ),
             )
@@ -70,8 +90,10 @@ def render_config_phase(algo_key: str, spec: AlgorithmSpec):
     handle_plot_action(
         algo_key=algo_key,
         spec=spec,
-        hyperparameter_specs=hyperparameter_specs,
-        hyperparameter_errors=hyperparameter_errors,
+        hyperparameter_specs=merged_hyperparameter_specs,
+        hyperparameter_errors=hyperparameter_errors
+        + function_vary_errors
+        + [f"Function vary: duplicate parameter name '{name}'." for name in sorted(set(function_vary_name_conflicts))],
         runtime_param_errors=runtime_param_errors,
         function_param_errors=function_param_errors,
         function_row_errors=function_row_errors,

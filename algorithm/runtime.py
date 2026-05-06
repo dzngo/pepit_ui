@@ -49,15 +49,24 @@ def run_algorithm(
 ) -> Tuple[float, Dict[str, Dict[str, float]]]:
     problem = PEP()
     funcs: Dict[str, object] = {}
-    func_params_by_alias: Dict[str, Dict[str, object]] = {}
+    function_param_overrides: Dict[str, object] = {}
+    for key, value in algo_params.items():
+        if "." in str(key):
+            function_param_overrides[str(key)] = value
+
     for slot_key, config in function_config.items():
+        alias_raw = config.get("alias")
+        alias = str(alias_raw).strip() if alias_raw is not None else ""
+        canonical_name = alias or slot_key
         function_key = config["function_key"]
         function_params = config["function_params"]
         function_spec = FUNCTIONS[function_key]
         resolved_params: Dict[str, object] = {}
-        injected_params: Dict[str, object] = {}
         for param in function_spec.parameters:
-            if param.name in function_params:
+            override_key = f"{canonical_name}.{param.name}"
+            if override_key in function_param_overrides:
+                raw_value = function_param_overrides[override_key]
+            elif param.name in function_params:
                 raw_value = function_params[param.name]
             elif param.default is not None:
                 raw_value = param.default
@@ -68,57 +77,33 @@ def run_algorithm(
                     continue
                 int_value = int(raw_value)
                 resolved_params[param.name] = problem.declare_block_partition(d=int_value)
-                injected_params[param.name] = int_value
             elif param.param_type == "Point":
                 resolved_params[param.name] = Point() if raw_value else None
-                injected_params[param.name] = bool(raw_value)
             elif param.param_type == "list":
                 if raw_value is None:
                     continue
                 list_value = list(raw_value)
                 resolved_params[param.name] = list_value
-                injected_params[param.name] = list_value
             elif param.param_type == "float":
                 if raw_value is None:
                     continue
                 float_value = float(raw_value)
                 resolved_params[param.name] = float_value
-                injected_params[param.name] = float_value
             else:
                 resolved_params[param.name] = raw_value
-                injected_params[param.name] = raw_value
         func = problem.declare_function(function_spec.cls, **resolved_params)
-        alias_raw = config.get("alias")
-        alias = str(alias_raw).strip() if alias_raw is not None else ""
-        canonical_name = alias or slot_key
         existing = funcs.get(canonical_name)
         if existing is not None and existing is not func:
             raise ValueError(f"Duplicate function alias in funcs dict: '{canonical_name}'")
         # Strict replace: expose only the configured canonical name in funcs.
         funcs[canonical_name] = func
-        func_params_by_alias[canonical_name] = injected_params
 
     overlap = set(funcs).intersection(algo_params)
     if overlap:
         names = ", ".join(sorted(overlap))
         raise ValueError(f"Function names conflict with hyperparameter names: {names}")
 
-    runtime_algo_params: Dict[str, float | object] = dict(algo_params)
-    hyperparam_names = set(algo_params.keys())
-    for alias, params_for_alias in func_params_by_alias.items():
-        if not str(alias).isidentifier():
-            continue
-        for name, value in params_for_alias.items():
-            if not str(name).isidentifier():
-                continue
-            injected_name = f"{alias}_{name}"
-            if injected_name in hyperparam_names:
-                raise ValueError(
-                    f"Injected function parameter name conflicts with hyperparameter name: '{injected_name}'."
-                )
-            if injected_name in runtime_algo_params:
-                raise ValueError(f"Injected function parameter name conflict for '{injected_name}'.")
-            runtime_algo_params[injected_name] = value
+    runtime_algo_params: Dict[str, float | object] = {str(k): v for k, v in algo_params.items() if "." not in str(k)}
 
     try:
         signature = inspect.signature(algo_spec.algo)
@@ -128,16 +113,7 @@ def run_algorithm(
         # Fallback for callables without inspectable signatures.
         algo_spec.algo(problem, funcs, runtime_algo_params)
     else:
-        positional_params = [
-            p
-            for p in signature.parameters.values()
-            if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-        ]
-        accepts_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in signature.parameters.values())
-        if accepts_varargs or len(positional_params) >= 4:
-            algo_spec.algo(problem, funcs, runtime_algo_params, func_params_by_alias)
-        else:
-            algo_spec.algo(problem, funcs, runtime_algo_params)
+        algo_spec.algo(problem, funcs, runtime_algo_params)
 
     problem._prepare_constraints(verbose=0)
     if active_dual_series_ids:

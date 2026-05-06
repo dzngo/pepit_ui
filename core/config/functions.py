@@ -17,6 +17,7 @@ def default_function_rows_from_spec(spec: AlgorithmSpec) -> list[dict[str, objec
                 "name": str(row.get("name", "")),
                 "function_key": str(row.get("function_key", "")),
                 "function_params": dict(row.get("function_params", {})),
+                "function_param_vary": dict(row.get("function_param_vary", {})),
             }
         )
     return rows

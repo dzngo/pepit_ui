@@ -1,4 +1,5 @@
 import random
+import re
 from math import isfinite
 
 import numpy as np
@@ -41,14 +42,25 @@ def parse_float_list(raw: str) -> tuple[list[float], str | None]:
     return values, None
 
 
+_NON_IDENTIFIER = re.compile(r"[^A-Za-z0-9_]")
+
+
+def _pattern_param_key(alias: str, param_name: str) -> str:
+    safe_alias = _NON_IDENTIFIER.sub("_", alias.strip()) or "f"
+    safe_param = _NON_IDENTIFIER.sub("_", param_name.strip()) or "p"
+    return f"{safe_alias}_{safe_param}"
+
+
 def build_pattern_param_values(function_config: dict) -> tuple[dict[str, float], list[str], list[str]]:
     param_values: dict[str, float] = {}
     invalid: list[str] = []
     conflicts: list[str] = []
-    for _, slot_config in sorted(function_config.items()):
+    for slot_key, slot_config in sorted(function_config.items()):
+        alias = str(slot_config.get("alias", slot_key) or slot_key)
         for name, raw in (slot_config.get("function_params") or {}).items():
-            if name in ("x", "pi", "e"):
-                conflicts.append(name)
+            pattern_name = _pattern_param_key(alias, str(name))
+            if pattern_name in ("x", "pi", "e"):
+                conflicts.append(pattern_name)
                 continue
             value = None
             if isinstance(raw, (int, float, np.integer, np.floating)):
@@ -57,15 +69,17 @@ def build_pattern_param_values(function_config: dict) -> tuple[dict[str, float],
                 try:
                     value = float(raw)
                 except ValueError:
-                    invalid.append(name)
+                    invalid.append(pattern_name)
             if value is None:
-                if name not in invalid:
-                    invalid.append(name)
+                if pattern_name not in invalid:
+                    invalid.append(pattern_name)
                 continue
-            if name in param_values and not np.isclose(param_values[name], value, rtol=1e-6, atol=1e-12):
-                conflicts.append(name)
+            if pattern_name in param_values and not np.isclose(
+                param_values[pattern_name], value, rtol=1e-6, atol=1e-12
+            ):
+                conflicts.append(pattern_name)
                 continue
-            param_values[name] = value
+            param_values[pattern_name] = value
     return param_values, sorted(set(invalid)), sorted(set(conflicts))
 
 

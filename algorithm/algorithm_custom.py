@@ -50,6 +50,7 @@ def _copy_function_rows(rows: list[dict]) -> list[dict]:
                 "name": str(row.get("name", "")),
                 "function_key": str(row.get("function_key", "")),
                 "function_params": dict(row.get("function_params", {})),
+                "function_param_vary": dict(row.get("function_param_vary", {})),
             }
         )
     return copied
@@ -91,12 +92,16 @@ def _parse_function_rows_payload(payload_value: object, fallback: list[dict]) ->
         function_params = item.get("function_params", {})
         if not isinstance(function_params, dict):
             function_params = {}
+        function_param_vary = item.get("function_param_vary", {})
+        if not isinstance(function_param_vary, dict):
+            function_param_vary = {}
         parsed.append(
             {
                 "id": str(item.get("id", "")),
                 "name": str(item.get("name", "")),
                 "function_key": str(item.get("function_key", "")),
                 "function_params": dict(function_params),
+                "function_param_vary": dict(function_param_vary),
             }
         )
     return parsed or _copy_function_rows(fallback)
@@ -208,6 +213,7 @@ def register_custom_algorithm(
                 "name": str(row.get("name", "")),
                 "function_key": str(row.get("function_key", "")),
                 "function_params": dict(row.get("function_params", {})),
+                "function_param_vary": dict(row.get("function_param_vary", {})),
             }
             for row in effective_function_rows
         ],

@@ -45,11 +45,9 @@ def compile_algorithm_body(body_code: str) -> Callable[[PEP, Dict[str, object], 
         problem: PEP,
         funcs: Dict[str, object],
         params: Dict[str, float],
-        func_params: Dict[str, Dict[str, object]] | None = None,
     ) -> dict:
         namespace = dict(base_namespace)
         namespace["problem"] = problem
-        namespace["func_params"] = dict(func_params or {})
         for name, value in funcs.items():
             if str(name).isidentifier():
                 namespace[str(name)] = value

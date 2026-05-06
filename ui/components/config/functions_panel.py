@@ -1,8 +1,9 @@
 import streamlit as st
 
 from algorithm.function_registry import FUNCTIONS
-from algorithm.types import AlgorithmSpec
+from algorithm.types import AlgorithmSpec, HyperparameterSpec
 from core.compute import float_text_default, parse_float_input, parse_float_list
+from core.config.hyperparams import parse_hyperparameter_specs
 from ui.state.config_state import (
     function_row_id_key,
     get_function_rows,
@@ -29,7 +30,7 @@ def render_functions_panel(
     *,
     algo_key: str,
     spec: AlgorithmSpec,
-) -> tuple[list[str], list[dict[str, object]], list[str], list[str]]:
+) -> tuple[list[str], list[dict[str, object]], list[str], list[str], list[HyperparameterSpec], list[str]]:
     function_names = sorted(FUNCTIONS.keys())
     function_rows = get_function_rows(
         algo_key,
@@ -73,41 +74,191 @@ def render_functions_panel(
                 if not isinstance(slot_params, dict):
                     slot_params = {}
                     row["function_params"] = slot_params
+                slot_vary = row.setdefault("function_param_vary", {})
+                if not isinstance(slot_vary, dict):
+                    slot_vary = {}
+                    row["function_param_vary"] = slot_vary
                 display_name = row["name"] or f"row {idx}"
                 if not function_spec.parameters:
                     st.caption(f"{display_name} has no required parameters.")
                 else:
-                    columns = st.columns(3)
+                    columns = st.columns(1)
                     for param_idx, param in enumerate(function_spec.parameters):
-                        with columns[param_idx % 3]:
+                        with columns[param_idx % len(columns)]:
                             with st.container(border=True):
                                 input_key = f"{function_row_id_key(algo_key)}param-{row_id}-{param.name}"
                                 param_context = f"{display_name} ({function_spec.cls.__name__}), parameter {param.name}"
                                 if param.param_type == "float":
+                                    vary_toggle_key = (
+                                        f"{function_row_id_key(algo_key)}vary-toggle-{row_id}-{param.name}"
+                                    )
+                                    header_left, header_right = st.columns([5, 2])
+                                    with header_right:
+                                        st.caption("Vary")
+                                        vary_enabled = st.checkbox(
+                                            "Vary",
+                                            key=vary_toggle_key,
+                                            value=param.name in slot_vary,
+                                            label_visibility="collapsed",
+                                        )
                                     default_text = float_text_default(slot_params.get(param.name, param.default))
                                     st.session_state.setdefault(input_key, default_text)
-                                    raw_value = st.text_input(param.name, key=input_key)
-                                    parsed_value, error = parse_float_input(raw_value)
-                                    if error:
-                                        function_param_errors.append(f"{param_context}: {error}")
-                                    else:
-                                        if param.required and parsed_value is None:
-                                            function_param_errors.append(f"{param_context}: value required.")
-                                        elif parsed_value is not None and parsed_value < 0:
-                                            function_param_errors.append(f"{param_context}: value must be >= 0.")
+                                    parsed_value, _ = parse_float_input(st.session_state.get(input_key, default_text))
+                                    if not vary_enabled:
+                                        with header_left:
+                                            raw_value = st.text_input(param.name, key=input_key)
+                                        parsed_value, error = parse_float_input(raw_value)
+                                        if error:
+                                            function_param_errors.append(f"{param_context}: {error}")
                                         else:
-                                            slot_params[param.name] = parsed_value
+                                            if param.required and parsed_value is None:
+                                                function_param_errors.append(f"{param_context}: value required.")
+                                            elif parsed_value is not None and parsed_value < 0:
+                                                function_param_errors.append(f"{param_context}: value must be >= 0.")
+                                            else:
+                                                slot_params[param.name] = parsed_value
+                                    else:
+                                        with header_left:
+                                            st.markdown(f"**{param.name}**")
+                                    if vary_enabled:
+                                        vary_prefix = f"{function_row_id_key(algo_key)}vary-{row_id}-{param.name}"
+                                        vary_defaults = slot_vary.get(param.name, {})
+                                        min_col, max_col, step_col, default_col, type_col = st.columns(5)
+                                        with min_col:
+                                            min_v = st.number_input(
+                                                "min",
+                                                value=float(
+                                                    vary_defaults.get(
+                                                        "min", parsed_value if parsed_value is not None else 0.0
+                                                    )
+                                                ),
+                                                key=f"{vary_prefix}-min",
+                                            )
+                                        with max_col:
+                                            max_v = st.number_input(
+                                                "max",
+                                                value=float(
+                                                    vary_defaults.get(
+                                                        "max", parsed_value if parsed_value is not None else 1.0
+                                                    )
+                                                ),
+                                                key=f"{vary_prefix}-max",
+                                            )
+                                        with step_col:
+                                            step_v = st.number_input(
+                                                "step",
+                                                min_value=1e-12,
+                                                value=float(vary_defaults.get("step", 0.1)),
+                                                key=f"{vary_prefix}-step",
+                                            )
+                                        with default_col:
+                                            default_v = st.number_input(
+                                                "default",
+                                                value=float(
+                                                    vary_defaults.get(
+                                                        "default", parsed_value if parsed_value is not None else min_v
+                                                    )
+                                                ),
+                                                key=f"{vary_prefix}-default",
+                                            )
+                                        with type_col:
+                                            vary_type = st.selectbox(
+                                                "type",
+                                                options=["float", "int"],
+                                                index=0
+                                                if str(vary_defaults.get("value_type", "float")) != "int"
+                                                else 1,
+                                                key=f"{vary_prefix}-type",
+                                            )
+                                        slot_vary[param.name] = {
+                                            "min": float(min_v),
+                                            "max": float(max_v),
+                                            "step": float(step_v),
+                                            "default": float(default_v),
+                                            "value_type": str(vary_type),
+                                        }
+                                    else:
+                                        slot_vary.pop(param.name, None)
                                     if param.description:
                                         st.caption(param.description)
                                 elif param.param_type == "BlockPartition":
-                                    d_value = st.number_input(
-                                        f"{param.name} (d)",
-                                        min_value=0,
-                                        step=1,
-                                        value=int(slot_params.get(param.name, 1) or 1),
-                                        key=input_key,
+                                    vary_toggle_key = (
+                                        f"{function_row_id_key(algo_key)}vary-toggle-{row_id}-{param.name}"
                                     )
-                                    slot_params[param.name] = int(d_value)
+                                    header_left, header_right = st.columns([5, 2])
+                                    with header_right:
+                                        st.caption("Vary")
+                                        vary_enabled = st.checkbox(
+                                            "Vary",
+                                            key=vary_toggle_key,
+                                            value=param.name in slot_vary,
+                                            label_visibility="collapsed",
+                                        )
+                                    d_value = int(slot_params.get(param.name, 1) or 1)
+                                    if not vary_enabled:
+                                        with header_left:
+                                            d_value = st.number_input(
+                                                f"{param.name} (d)",
+                                                min_value=0,
+                                                step=1,
+                                                value=d_value,
+                                                key=input_key,
+                                            )
+                                        slot_params[param.name] = int(d_value)
+                                    else:
+                                        with header_left:
+                                            st.markdown(f"**{param.name} (d)**")
+                                    if vary_enabled:
+                                        vary_prefix = f"{function_row_id_key(algo_key)}vary-{row_id}-{param.name}"
+                                        vary_defaults = slot_vary.get(param.name, {})
+                                        min_col, max_col, step_col, default_col, type_col = st.columns(5)
+                                        with min_col:
+                                            min_v = st.number_input(
+                                                "min",
+                                                step=1,
+                                                value=int(vary_defaults.get("min", int(d_value))),
+                                                key=f"{vary_prefix}-min",
+                                            )
+                                        with max_col:
+                                            max_v = st.number_input(
+                                                "max",
+                                                step=1,
+                                                value=int(vary_defaults.get("max", int(d_value) + 1)),
+                                                key=f"{vary_prefix}-max",
+                                            )
+                                        with step_col:
+                                            step_v = st.number_input(
+                                                "step",
+                                                min_value=1,
+                                                step=1,
+                                                value=int(vary_defaults.get("step", 1)),
+                                                key=f"{vary_prefix}-step",
+                                            )
+                                        with default_col:
+                                            default_v = st.number_input(
+                                                "default",
+                                                step=1,
+                                                value=int(vary_defaults.get("default", int(d_value))),
+                                                key=f"{vary_prefix}-default",
+                                            )
+                                        with type_col:
+                                            st.caption("type")
+                                            st.text_input(
+                                                "type",
+                                                value="int",
+                                                key=f"{vary_prefix}-type-readonly",
+                                                disabled=True,
+                                                label_visibility="collapsed",
+                                            )
+                                        slot_vary[param.name] = {
+                                            "min": float(min_v),
+                                            "max": float(max_v),
+                                            "step": float(step_v),
+                                            "default": float(default_v),
+                                            "value_type": "int",
+                                        }
+                                    else:
+                                        slot_vary.pop(param.name, None)
                                     desc_parts = []
                                     if param.description:
                                         desc_parts.append(param.description)
@@ -161,6 +312,9 @@ def render_functions_panel(
                     stale_params = set(slot_params) - {p.name for p in function_spec.parameters}
                     for key in stale_params:
                         slot_params.pop(key, None)
+                    stale_vary = set(slot_vary) - {p.name for p in function_spec.parameters}
+                    for key in stale_vary:
+                        slot_vary.pop(key, None)
 
                 if len(function_rows) >= 2 and st.button(
                     "Remove",
@@ -180,6 +334,7 @@ def render_functions_panel(
                 "name": suggest_new_function_name(function_rows),
                 "function_key": default_function_key,
                 "function_params": {},
+                "function_param_vary": {},
             }
         )
         st.rerun()
@@ -192,4 +347,33 @@ def render_functions_panel(
     for error in function_row_errors:
         st.error(error)
 
-    return function_names, function_rows, function_param_errors, function_row_errors
+    vary_rows: list[dict[str, object]] = []
+    for row in function_rows:
+        alias = str(row.get("name") or "").strip()
+        vary_map = row.get("function_param_vary", {})
+        if not alias or not isinstance(vary_map, dict):
+            continue
+        for param_name, vary in vary_map.items():
+            if not isinstance(vary, dict):
+                continue
+            vary_rows.append(
+                {
+                    "name": f"{alias}.{param_name}",
+                    "label": f"{alias}.{param_name}",
+                    "value_type": str(vary.get("value_type", "float")),
+                    "min": vary.get("min"),
+                    "max": vary.get("max"),
+                    "step": vary.get("step"),
+                    "default": vary.get("default"),
+                }
+            )
+    if vary_rows:
+        vary_specs, vary_errors = parse_hyperparameter_specs(
+            vary_rows,
+            reserved_names=_RUNTIME_RESERVED_NAMES,
+        )
+    else:
+        vary_specs, vary_errors = [], []
+    vary_errors = [f"Function vary: {msg}" for msg in vary_errors]
+
+    return function_names, function_rows, function_param_errors, function_row_errors, vary_specs, vary_errors

@@ -45,6 +45,7 @@ def build_steps_test_context(
                 "name": str(row.get("name", "")),
                 "function_key": str(row.get("function_key", "")),
                 "function_params": dict(row.get("function_params", {})),
+                "function_param_vary": dict(row.get("function_param_vary", {})),
             }
             for row in function_rows
         ]
@@ -107,6 +108,7 @@ def sync_custom_algorithm_defaults_in_state(
         for row in source_rows:
             copied_row = dict(row)
             copied_row["function_params"] = dict(row.get("function_params", {}))
+            copied_row["function_param_vary"] = dict(row.get("function_param_vary", {}))
             copied_function_rows.append(copied_row)
         function_rows_store[target_algo_name] = copied_function_rows
 

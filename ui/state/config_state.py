@@ -37,12 +37,16 @@ def sanitize_function_rows(
         function_params = row.get("function_params")
         if not isinstance(function_params, dict):
             function_params = {}
+        function_param_vary = row.get("function_param_vary")
+        if not isinstance(function_param_vary, dict):
+            function_param_vary = {}
         normalized.append(
             {
                 "id": row_id,
                 "name": name,
                 "function_key": function_key,
                 "function_params": dict(function_params),
+                "function_param_vary": dict(function_param_vary),
             }
         )
 
@@ -117,6 +121,7 @@ def build_function_config(
         function_config[row_id] = {
             "function_key": str(row.get("function_key") or "").strip(),
             "function_params": dict(row.get("function_params") or {}),
+            "function_param_vary": dict(row.get("function_param_vary") or {}),
             "alias": name,
         }
     return function_config

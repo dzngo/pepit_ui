@@ -175,10 +175,13 @@
         ctx.dualParams.forEach((param) => {
           const values = Array.isArray(ctx.paramValuesByName[param]) ? ctx.paramValuesByName[param] : [];
           const idx = clampIdx(getLocalIndex(axis, param), values.length - 1);
-          scope[param] = values[idx] !== undefined ? Number(values[idx]) : null;
+          const resolved = values[idx] !== undefined ? Number(values[idx]) : null;
+          scope[param] = resolved;
+          if (param.includes(".")) scope[param.replace(/\./g, "_")] = resolved;
         });
         scope.x = x;
         scope[axis] = x;
+        if (axis.includes(".")) scope[axis.replace(/\./g, "_")] = x;
         try {
           const value = compiled.evaluate(scope);
           const numeric = typeof value === "number" ? value : Number(value);
