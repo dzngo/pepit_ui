@@ -1,5 +1,4 @@
 import random
-import re
 from math import isfinite
 
 import numpy as np
@@ -42,23 +41,17 @@ def parse_float_list(raw: str) -> tuple[list[float], str | None]:
     return values, None
 
 
-_NON_IDENTIFIER = re.compile(r"[^A-Za-z0-9_]")
-
-
-def _pattern_param_key(alias: str, param_name: str) -> str:
-    safe_alias = _NON_IDENTIFIER.sub("_", alias.strip()) or "f"
-    safe_param = _NON_IDENTIFIER.sub("_", param_name.strip()) or "p"
-    return f"{safe_alias}_{safe_param}"
-
-
 def build_pattern_param_values(function_config: dict) -> tuple[dict[str, float], list[str], list[str]]:
     param_values: dict[str, float] = {}
     invalid: list[str] = []
     conflicts: list[str] = []
     for slot_key, slot_config in sorted(function_config.items()):
         alias = str(slot_config.get("alias", slot_key) or slot_key)
+        varied_params = set((slot_config.get("function_param_vary") or {}).keys())
         for name, raw in (slot_config.get("function_params") or {}).items():
-            pattern_name = _pattern_param_key(alias, str(name))
+            if name in varied_params:
+                continue
+            pattern_name = f"{alias}.{name}"
             if pattern_name in ("x", "pi", "e"):
                 conflicts.append(pattern_name)
                 continue

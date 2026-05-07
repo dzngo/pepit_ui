@@ -19,6 +19,24 @@ from ui.state.state_utils import (
 )
 
 
+def _function_params_summary(slot_config: dict) -> str:
+    fixed_params = dict(slot_config.get("function_params") or {})
+    vary_params = dict(slot_config.get("function_param_vary") or {})
+    parts: list[str] = []
+    for name, value in sorted(fixed_params.items()):
+        if name in vary_params:
+            continue
+        parts.append(f"{name}={value}")
+    for name, vary in sorted(vary_params.items()):
+        if not isinstance(vary, dict):
+            continue
+        parts.append(
+            f"{name}=vary[{vary.get('min')}, {vary.get('max')}], "
+            f"step={vary.get('step')}, default={vary.get('default')}, type={vary.get('value_type', 'float')}"
+        )
+    return ", ".join(parts)
+
+
 def render_results_phase(algo_key: str, spec):
     st.markdown(
         """
@@ -85,8 +103,8 @@ def render_results_phase(algo_key: str, spec):
         for slot_key, slot_config in sorted(settings["function_config"].items()):
             alias = str(slot_config.get("alias", slot_key) or slot_key)
             st.markdown(f"{alias}: `{slot_config['function_key']}`")
-            if slot_config["function_params"]:
-                params_line = ", ".join(f"{name}={value}" for name, value in slot_config["function_params"].items())
+            params_line = _function_params_summary(slot_config)
+            if params_line:
                 st.markdown(f"*params*: {params_line}")
             else:
                 st.markdown("*params*: `{}`")
@@ -120,8 +138,6 @@ def render_results_phase(algo_key: str, spec):
             continue
         idx = int(cursor_indices.get(hp.name, 0))
         idx = max(0, min(idx, len(values) - 1))
-        safe_name = hp.name.replace(".", "_")
-        base_param_values[safe_name] = float(values[idx])
     runs = st.session_state.setdefault(algo_state_key("recompute_runs", algo_key), [])
     artifacts = build_results_artifacts(
         algo_key=algo_key,

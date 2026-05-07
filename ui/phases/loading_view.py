@@ -18,6 +18,24 @@ from ui.state.state_utils import (
 )
 
 
+def _function_params_summary(slot_config: dict) -> str:
+    fixed_params = dict(slot_config.get("function_params") or {})
+    vary_params = dict(slot_config.get("function_param_vary") or {})
+    parts: list[str] = []
+    for name, value in sorted(fixed_params.items()):
+        if name in vary_params:
+            continue
+        parts.append(f"{name}={value}")
+    for name, vary in sorted(vary_params.items()):
+        if not isinstance(vary, dict):
+            continue
+        parts.append(
+            f"{name}=vary[{vary.get('min')}, {vary.get('max')}], "
+            f"step={vary.get('step')}, default={vary.get('default')}, type={vary.get('value_type', 'float')}"
+        )
+    return ", ".join(parts)
+
+
 def render_loading_phase(algo_key: str, spec):
     pending = st.session_state.get("pending_settings")
     if not pending or pending["algo_key"] != algo_key:
@@ -46,8 +64,8 @@ def render_loading_phase(algo_key: str, spec):
         for slot_key, slot_config in sorted(pending["function_config"].items()):
             alias = str(slot_config.get("alias", slot_key) or slot_key)
             st.markdown(f"{alias}: `{slot_config['function_key']}`")
-            if slot_config["function_params"]:
-                params_line = ", ".join(f"{name}={value}" for name, value in slot_config["function_params"].items())
+            params_line = _function_params_summary(slot_config)
+            if params_line:
                 st.markdown(f"*params*: {params_line}")
             else:
                 st.markdown("*params*: `{}`")

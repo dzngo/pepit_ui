@@ -1,6 +1,22 @@
 (() => {
   const ns = (globalThis.__resultsWorkspace = globalThis.__resultsWorkspace || {});
 
+  function setScopeValue(scope, name, value) {
+    if (!name || !Number.isFinite(Number(value))) return;
+    if (name.includes(".")) {
+      const parts = name.split(".").filter(Boolean);
+      if (!parts.length) return;
+      let target = scope;
+      parts.slice(0, -1).forEach((part) => {
+        if (!target[part] || typeof target[part] !== "object") target[part] = {};
+        target = target[part];
+      });
+      target[parts[parts.length - 1]] = Number(value);
+    } else {
+      scope[name] = Number(value);
+    }
+  }
+
   function createDualController(ctx, tauCtrl) {
     function constraintFromLabel(label) {
       const value = String(label || "");
@@ -341,14 +357,14 @@
         const scope = { x };
         Object.entries(ctx.patternParams).forEach(([name, value]) => {
           const numeric = Number(value);
-          if (Number.isFinite(numeric)) scope[name] = numeric;
+          if (Number.isFinite(numeric)) setScopeValue(scope, name, numeric);
         });
         ctx.dualParams.forEach((param) => {
           const values = Array.isArray(ctx.paramValuesByName[param]) ? ctx.paramValuesByName[param] : [];
           const idx = tauCtrl.clampIdx(ctx.cursorIndicesByParamState[param] ?? 0, values.length - 1);
-          scope[param] = values[idx] !== undefined ? Number(values[idx]) : null;
+          setScopeValue(scope, param, values[idx] !== undefined ? Number(values[idx]) : null);
         });
-        scope[axis] = Number(x);
+        setScopeValue(scope, axis, Number(x));
         return scope;
       });
       updateOverlayTrace(plotId, xValues, result.yValues, rawExpr);

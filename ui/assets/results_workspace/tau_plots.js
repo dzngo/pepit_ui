@@ -12,6 +12,22 @@
     return trimmed.replace(/^y\s*=\s*/i, "");
   }
 
+  function setScopeValue(scope, name, value) {
+    if (!name || !Number.isFinite(Number(value))) return;
+    if (name.includes(".")) {
+      const parts = name.split(".").filter(Boolean);
+      if (!parts.length) return;
+      let target = scope;
+      parts.slice(0, -1).forEach((part) => {
+        if (!target[part] || typeof target[part] !== "object") target[part] = {};
+        target = target[part];
+      });
+      target[parts[parts.length - 1]] = Number(value);
+    } else {
+      scope[name] = Number(value);
+    }
+  }
+
   function createTauController(ctx) {
     function currentCursorIndicesByParam() {
       const indices = {};
@@ -138,13 +154,14 @@
 
     function buildPatternHintText(primaryAxisName) {
       const entries = Object.entries(ctx.patternParams).filter(([, value]) => Number.isFinite(Number(value)));
-      const paramsHint = entries.length
-        ? entries.map(([name, value]) => `${name}=${Number(value).toString()}`).join(", ")
-        : "none";
-      const parts = [`Available parameters: ${paramsHint}.`];
+      const parts = [];
+      if (entries.length) {
+        const paramsHint = entries.map(([name, value]) => `${name}=${Number(value).toString()}`).join(", ");
+        parts.push(`Available parameters: ${paramsHint}.`);
+      }
       if (ctx.patternInvalidParams.length) parts.push(`Ignored (non-scalar): ${ctx.patternInvalidParams.join(", ")}.`);
       if (ctx.patternConflictParams.length) parts.push(`Conflicts: ${ctx.patternConflictParams.join(", ")}.`);
-      parts.push(`Variables: x, ${ctx.dualParams.join(", ")}. Axis '${primaryAxisName}' uses x.`);
+      parts.push(`Variables: x, ${ctx.dualParams.join(", ")}.`);
       return parts.join(" ");
     }
 
@@ -170,18 +187,16 @@
         const scope = {};
         Object.entries(ctx.patternParams).forEach(([name, value]) => {
           const numeric = Number(value);
-          if (Number.isFinite(numeric)) scope[name] = numeric;
+          if (Number.isFinite(numeric)) setScopeValue(scope, name, numeric);
         });
         ctx.dualParams.forEach((param) => {
           const values = Array.isArray(ctx.paramValuesByName[param]) ? ctx.paramValuesByName[param] : [];
           const idx = clampIdx(getLocalIndex(axis, param), values.length - 1);
           const resolved = values[idx] !== undefined ? Number(values[idx]) : null;
-          scope[param] = resolved;
-          if (param.includes(".")) scope[param.replace(/\./g, "_")] = resolved;
+          setScopeValue(scope, param, resolved);
         });
         scope.x = x;
-        scope[axis] = x;
-        if (axis.includes(".")) scope[axis.replace(/\./g, "_")] = x;
+        setScopeValue(scope, axis, x);
         try {
           const value = compiled.evaluate(scope);
           const numeric = typeof value === "number" ? value : Number(value);
