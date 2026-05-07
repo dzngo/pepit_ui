@@ -111,7 +111,7 @@
             `<span class="tau-global-value" data-param="${ctx.escapeHtml(axisParam)}"></span>` +
             `</div>` +
             `</div>` +
-            `<input class="dual-overlay-input tau-pattern-input" data-param="${ctx.escapeHtml(axisParam)}" type="text" value="${ctx.escapeHtml(patternValue)}" placeholder="${ctx.randomOverlayPlaceholder()}" style="display:block;">` +
+            `<input class="dual-prediction-input tau-pattern-input" data-param="${ctx.escapeHtml(axisParam)}" type="text" value="${ctx.escapeHtml(patternValue)}" placeholder="${ctx.randomPredictionPlaceholder()}">` +
             `<div class="tau-pattern-hint" data-param="${ctx.escapeHtml(axisParam)}" style="font-size:12px;color:#666;"></div>` +
             `<div class="tau-pattern-error" data-param="${ctx.escapeHtml(axisParam)}"></div>` +
             `</div>` +
@@ -165,7 +165,7 @@
       return parts.join(" ");
     }
 
-    function tauPatternOverlay(axis, exprRaw) {
+    function tauPatternPrediction(axis, exprRaw) {
       const expr = normalizeExpression(exprRaw || "");
       if (!expr) return { yValues: null, error: "" };
       if (!window.math) return { yValues: null, error: "Math library loading..." };
@@ -264,19 +264,23 @@
         ctx.tauTraceRegistry.set(axisParam, runMap);
 
         const patternInput = ctx.tauPatternInputsByParam.get(axisParam);
-        const overlay = tauPatternOverlay(axisParam, patternInput ? patternInput.value : "");
+        const prediction = tauPatternPrediction(axisParam, patternInput ? patternInput.value : "");
         const errorEl = ctx.tauPatternErrorsByParam.get(axisParam);
-        if (errorEl) errorEl.textContent = overlay.error;
-        if (patternInput) patternInput.classList.toggle("is-error", Boolean(overlay.error));
-        if (overlay.yValues && !overlay.error) {
+        if (errorEl) errorEl.textContent = prediction.error;
+        if (patternInput) patternInput.classList.toggle("is-error", Boolean(prediction.error));
+        ctx.tauPredictionTraceRegistry.delete(axisParam);
+        if (prediction.yValues && !prediction.error) {
+          const traceIndex = traces.length;
           traces.push({
             x: axisSeries.xValues,
-            y: overlay.yValues,
+            y: prediction.yValues,
             mode: "lines",
             line: { color: "#ff8a00", width: 2, dash: "dash" },
-            hovertemplate: `${ctx.escapeHtml(axisParam)}=%{x:.3f}<br>pattern=%{y:.3e}<extra></extra>`,
+            hovertemplate: `${ctx.escapeHtml(axisParam)}=%{x:.3f}<br>prediction=%{y:.3e}<extra></extra>`,
             showlegend: false,
+            visible: ctx.tauPredictionVisible ? true : "legendonly",
           });
+          ctx.tauPredictionTraceRegistry.set(axisParam, traceIndex);
         }
 
         const fixedParts = ctx.dualParams
@@ -302,6 +306,19 @@
         );
       });
       updateTauLabels();
+    }
+
+    function setTauPredictionTraceVisibility(isVisible) {
+      if (!window.Plotly) return;
+      ctx.tauPredictionTraceRegistry.forEach((traceIndex, axisParam) => {
+        const plotId = `tau-plot-${ctx.sanitizeId(axisParam)}`;
+        const plotDiv = ctx.root.querySelector(`#${plotId}`);
+        if (!plotDiv || !plotDiv.data || !plotDiv.data[traceIndex]) {
+          ctx.tauPredictionTraceRegistry.delete(axisParam);
+          return;
+        }
+        Plotly.restyle(plotDiv, { visible: isVisible ? true : "legendonly" }, [traceIndex]);
+      });
     }
 
     function initTauStateAndDom() {
@@ -393,6 +410,7 @@
       bindTauEvents,
       buildPatternHintText,
       renderTauPlots,
+      setTauPredictionTraceVisibility,
     };
   }
 

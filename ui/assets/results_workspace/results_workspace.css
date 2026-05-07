@@ -279,21 +279,18 @@
   color: rgba(49, 51, 63, 0.55);
   cursor: not-allowed;
 }
-.dual-overlay-button {
-  border: 1px solid #ff8a00;
-  background: #fff2e0;
-  color: #8a3d00;
+.dual-checkbox-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #31333f;
   font-weight: 600;
-  padding: 6px 12px;
-  border-radius: 999px;
+  line-height: 1.2;
   cursor: pointer;
+  white-space: nowrap;
 }
-.dual-overlay-button:hover {
-  background: #ffe1c2;
-}
-.dual-overlay-button.is-active {
-  background: #ff8a00;
-  color: #fff;
+.dual-checkbox-toggle input {
+  accent-color: #ff8a00;
 }
 .dual-toggle-button {
   border: 1px solid #111;
@@ -374,6 +371,13 @@
   font-size: 12px;
   line-height: 1.2;
 }
+.tau-prediction-control {
+  margin-top: -4px;
+}
+.tau-pattern-hint,
+.tau-pattern-error {
+  display: none;
+}
 .dual-plot-sections {
   display: flex;
   flex-direction: column;
@@ -421,7 +425,7 @@
   height: 320px;
   min-height: 320px;
 }
-.dual-overlay-input {
+.dual-prediction-input {
   display: none;
   border: 1px solid rgba(49, 51, 63, 0.2);
   border-radius: 8px;
@@ -430,11 +434,14 @@
   width: 100%;
   box-sizing: border-box;
 }
-.dual-overlay-input.is-error {
+.dual-prediction-input.is-error {
   border-color: #cb0000;
   background: #fff1f1;
 }
-.dual-wrapper.dual-show-overlay .dual-overlay-input {
+.dual-wrapper.dual-show-prediction .dual-plot-card .dual-prediction-input,
+.dual-wrapper.dual-show-tau-prediction .tau-pattern-input,
+.dual-wrapper.dual-show-tau-prediction .tau-pattern-hint,
+.dual-wrapper.dual-show-tau-prediction .tau-pattern-error {
   display: block;
 }
 .dual-button {

@@ -3,7 +3,7 @@
 
   ns.constants = {
     RUN_COLORS: ['#0ea5e9', '#14b8a6', '#e11d48', '#f4ec0b', '#22c55e', '#ef4444', '#3b82f6', '#84cc16', '#a855f7'],
-    OVERLAY_EXAMPLES: ['1/log(x)', 'sin(x)', '2*x^2 + 3', 'log(x)', 'sqrt(x)', 'exp(-x)'],
+    CURVE_PREDICTION_EXAMPLES: ['1/log(x)', 'sin(x)', '2*x^2 + 3', 'log(x)', 'sqrt(x)', 'exp(-x)'],
     LEGEND_COLLAPSED_KEY: 'dual_legend_collapsed',
     DEFAULT_METRIC: 'non_zero_pct_with_none',
   };

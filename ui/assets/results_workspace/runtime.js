@@ -26,10 +26,11 @@ function renderResultsWorkspaceRuntime(component) {
     plotSelectionMap,
     deactivatedForRecompute,
     selectedPlotCards,
-    overlayState,
-    overlayDebounce,
+    predictionState,
+    predictionDebounce,
     dualTraceRegistry,
     tauTraceRegistry,
+    tauPredictionTraceRegistry,
   } = state;
 
   const dualRuns = rawDualRuns.map((run, idx) => ({
@@ -42,10 +43,10 @@ function renderResultsWorkspaceRuntime(component) {
   });
   const runVisibility = new Map(Array.from(runsById.values()).map((run) => [run.id, run.visible !== false]));
 
-  function randomOverlayPlaceholder() {
-    const overlayExamples = (ns.constants && ns.constants.OVERLAY_EXAMPLES) || [];
-    const example = overlayExamples[Math.floor(Math.random() * overlayExamples.length)];
-    return `example: ${example}`;
+  function randomPredictionPlaceholder() {
+    const predictionExamples = (ns.constants && ns.constants.CURVE_PREDICTION_EXAMPLES) || [];
+    const example = predictionExamples[Math.floor(Math.random() * predictionExamples.length)] || "log(x)";
+    return `Enter curve prediction, example ${example}`;
   }
 
   function ensurePlotly(callback) {
@@ -90,7 +91,7 @@ function renderResultsWorkspaceRuntime(component) {
     escapeHtml: ns.escapeHtml,
     sanitizeId: ns.sanitizeId,
     formatDualLabel: ns.formatDualLabel,
-    randomOverlayPlaceholder,
+    randomPredictionPlaceholder,
     dualParams,
     paramValuesByName,
     seriesDataByParam,
@@ -110,10 +111,12 @@ function renderResultsWorkspaceRuntime(component) {
     plotSelectionMap,
     deactivatedForRecompute,
     selectedPlotCards,
-    overlayState,
-    overlayDebounce,
+    predictionState,
+    predictionDebounce,
     dualTraceRegistry,
     tauTraceRegistry,
+    tauPredictionTraceRegistry,
+    tauPredictionVisible: state.tauPredictionVisible,
     hideZero: state.hideZero,
     actionTab: state.actionTab,
     tauGlobalSlidersByParam: new Map(),
@@ -143,13 +146,16 @@ function renderResultsWorkspaceRuntime(component) {
         </aside>
         <main class="dual-main">
           <div class="dual-section-title">Worst-case guarantee</div>
+          <div class="dual-control-row tau-prediction-control">
+            <label class="dual-checkbox-toggle" id="tau-predict-curve-wrapper"><input type="checkbox" id="tau-predict-curve"> <span id="tau-predict-curve-label">Predict curve</span></label>
+          </div>
           <div class="tau-panels-grid">${tauCtrl.tauPanelsHtml()}</div>
           <div class="dual-section-title">Dual values</div>
           <div class="dual-control-bar">
             <div class="dual-control-row">
               <label class="dual-control-label" for="dual-ranking-metric">Ranking metric</label>
               <select id="dual-ranking-metric" class="dual-ranking-select">${metricOptionsHtml()}</select>
-              <button type="button" class="dual-toggle-button is-active" id="dual-toggle-zero">Show all-zero duals</button>
+              <label class="dual-checkbox-toggle" id="dual-show-zero-wrapper"><input type="checkbox" id="dual-show-zero"> Show all-zero duals</label>
             </div>
           </div>
           ${dualCtrl.dualSectionsHtml()}
@@ -167,8 +173,8 @@ function renderResultsWorkspaceRuntime(component) {
             </div>
             <div id="tab-panel-plot" class="dual-mode-toolbar" role="tabpanel" aria-labelledby="tab-plot">
               <button type="button" class="dual-plot-button" id="dual-plot" disabled>Plot selected</button>
-              <button type="button" class="dual-overlay-button" id="dual-overlay" style="display:none;">Overlay plot</button>
               <button type="button" class="dual-clear-button" id="dual-clear">Select all</button>
+              <label class="dual-checkbox-toggle" id="dual-predict-curve-wrapper" style="display:none;"><input type="checkbox" id="dual-predict-curve"> <span id="dual-predict-curve-label">Predict curve</span></label>
             </div>
             <div id="tab-panel-recompute" class="dual-mode-toolbar dual-mode-toolbar-stacked" role="tabpanel" aria-labelledby="tab-recompute" hidden>
               <div class="dual-selected-header"><div class="dual-selected-title">Deactivated dual values</div></div>
@@ -191,7 +197,7 @@ function renderResultsWorkspaceRuntime(component) {
   ctx.shellEl = ctx.root.querySelector(".dual-shell");
   ctx.legendToggleBtn = ctx.root.querySelector("#dual-legend-toggle");
   ctx.deactivatedListEl = ctx.root.querySelector("#dual-deactivated-list");
-  ctx.toggleBtn = ctx.root.querySelector("#dual-toggle-zero");
+  ctx.showZeroCheckbox = ctx.root.querySelector("#dual-show-zero");
   ctx.tabPlotBtn = ctx.root.querySelector("#tab-plot");
   ctx.tabRecomputeBtn = ctx.root.querySelector("#tab-recompute");
   ctx.tabPanelPlot = ctx.root.querySelector("#tab-panel-plot");
@@ -200,7 +206,12 @@ function renderResultsWorkspaceRuntime(component) {
   ctx.modeDescription = ctx.root.querySelector("#dual-mode-description");
   ctx.modeCount = ctx.root.querySelector("#dual-mode-count");
   ctx.plotBtn = ctx.root.querySelector("#dual-plot");
-  ctx.overlayBtn = ctx.root.querySelector("#dual-overlay");
+  ctx.predictCurveWrapper = ctx.root.querySelector("#dual-predict-curve-wrapper");
+  ctx.predictCurveCheckbox = ctx.root.querySelector("#dual-predict-curve");
+  ctx.predictCurveLabel = ctx.root.querySelector("#dual-predict-curve-label");
+  ctx.tauPredictCurveWrapper = ctx.root.querySelector("#tau-predict-curve-wrapper");
+  ctx.tauPredictCurveCheckbox = ctx.root.querySelector("#tau-predict-curve");
+  ctx.tauPredictCurveLabel = ctx.root.querySelector("#tau-predict-curve-label");
   ctx.clearBtn = ctx.root.querySelector("#dual-clear");
   ctx.removeButtonsByParam = new Map(ctx.dualParams.map((param) => [param, ctx.root.querySelector(`#dual-remove-${ctx.sanitizeId(param)}`)]));
   ctx.recomputeBtn = ctx.root.querySelector("#dual-recompute");
@@ -225,6 +236,28 @@ function renderResultsWorkspaceRuntime(component) {
     getLocalByAxis: tauCtrl.currentLocalCursorIndicesByAxis,
     getPatterns: tauCtrl.currentPatternsByParam,
   });
+
+  function setCurvePredictionVisible(isVisible) {
+    const wrapperEl = ctx.root.querySelector(".dual-wrapper");
+    ctx.root.querySelectorAll(".dual-prediction-input").forEach((input) => input.setAttribute("placeholder", randomPredictionPlaceholder()));
+    if (!wrapperEl || !ctx.predictCurveCheckbox) return;
+    wrapperEl.classList.toggle("dual-show-prediction", Boolean(isVisible));
+    ctx.predictCurveCheckbox.checked = Boolean(isVisible);
+    if (ctx.predictCurveLabel) ctx.predictCurveLabel.textContent = isVisible ? "Hide prediction" : "Predict curve";
+    dualCtrl.setPredictionTraceVisibility(Boolean(isVisible));
+  }
+
+  function setTauPredictionVisible(isVisible) {
+    ctx.tauPredictionVisible = Boolean(isVisible);
+    ctx.root.querySelectorAll(".tau-pattern-input").forEach((input) => input.setAttribute("placeholder", randomPredictionPlaceholder()));
+    if (ctx.tauPredictCurveCheckbox) ctx.tauPredictCurveCheckbox.checked = ctx.tauPredictionVisible;
+    if (ctx.tauPredictCurveLabel) {
+      ctx.tauPredictCurveLabel.textContent = ctx.tauPredictionVisible ? "Hide prediction" : "Predict curve";
+    }
+    const wrapperEl = ctx.root.querySelector(".dual-wrapper");
+    if (wrapperEl) wrapperEl.classList.toggle("dual-show-tau-prediction", ctx.tauPredictionVisible);
+    tauCtrl.setTauPredictionTraceVisibility(ctx.tauPredictionVisible);
+  }
 
   ctx.root.addEventListener("click", (event) => {
     const target = event.target;
@@ -302,27 +335,9 @@ function renderResultsWorkspaceRuntime(component) {
       ensurePlotly(dualCtrl.plotSelected);
       return;
     }
-    if (button.id === "dual-toggle-zero") {
-      event.preventDefault();
-      ctx.hideZero = !ctx.hideZero;
-      button.classList.toggle("is-active", ctx.hideZero);
-      button.textContent = ctx.hideZero ? "Show all-zero duals" : "Hide all-zero duals";
-      dualCtrl.applyZeroFilter();
-      dualCtrl.updateClearButton();
-      return;
-    }
     if (button.id === "dual-plot") {
       event.preventDefault();
       ensurePlotly(dualCtrl.plotSelected);
-      return;
-    }
-    if (button.id === "dual-overlay") {
-      event.preventDefault();
-      const wrapperEl = ctx.root.querySelector(".dual-wrapper");
-      ctx.root.querySelectorAll(".dual-overlay-input").forEach((input) => input.setAttribute("placeholder", randomOverlayPlaceholder()));
-      if (!wrapperEl) return;
-      wrapperEl.classList.toggle("dual-show-overlay");
-      button.classList.toggle("is-active", wrapperEl.classList.contains("dual-show-overlay"));
       return;
     }
     if (button.id === "dual-clear") {
@@ -372,6 +387,19 @@ function renderResultsWorkspaceRuntime(component) {
     }
   });
 
+  if (ctx.showZeroCheckbox) {
+    ctx.showZeroCheckbox.addEventListener("change", () => {
+      ctx.hideZero = !ctx.showZeroCheckbox.checked;
+      dualCtrl.applyZeroFilter();
+      dualCtrl.updateClearButton();
+    });
+  }
+  if (ctx.predictCurveCheckbox) {
+    ctx.predictCurveCheckbox.addEventListener("change", () => setCurvePredictionVisible(ctx.predictCurveCheckbox.checked));
+  }
+  if (ctx.tauPredictCurveCheckbox) {
+    ctx.tauPredictCurveCheckbox.addEventListener("change", () => setTauPredictionVisible(ctx.tauPredictCurveCheckbox.checked));
+  }
   tauCtrl.bindTauEvents(ensurePlotly, ensureMath, emitCursorIfChanged);
   if (ctx.metricSelect) {
     ctx.metricSelect.addEventListener("change", () => {
@@ -391,8 +419,8 @@ function renderResultsWorkspaceRuntime(component) {
     if (!hintEl) return;
     hintEl.textContent = tauCtrl.buildPatternHintText(param);
   });
-  ctx.toggleBtn.classList.toggle("is-active", ctx.hideZero);
-  ctx.toggleBtn.textContent = ctx.hideZero ? "Show all-zero duals" : "Hide all-zero duals";
+  if (ctx.showZeroCheckbox) ctx.showZeroCheckbox.checked = !ctx.hideZero;
+  setTauPredictionVisible(ctx.tauPredictionVisible);
   (payload.selectedSeriesIds || []).forEach((seriesId) => {
     const series = seriesDataByParam[seriesId];
     if (!series) return;

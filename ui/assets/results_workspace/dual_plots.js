@@ -263,13 +263,14 @@
       });
     }
 
-    function updateOverlayButtonVisibility(show) {
-      if (!ctx.overlayBtn) return;
-      ctx.overlayBtn.style.display = show ? "inline-flex" : "none";
+    function updatePredictionToggleVisibility(show) {
+      if (!ctx.predictCurveWrapper || !ctx.predictCurveCheckbox) return;
+      ctx.predictCurveWrapper.style.display = show ? "inline-flex" : "none";
       const wrapperEl = ctx.root.querySelector(".dual-wrapper");
       if (!show && wrapperEl) {
-        wrapperEl.classList.remove("dual-show-overlay");
-        ctx.overlayBtn.classList.remove("is-active");
+        wrapperEl.classList.remove("dual-show-prediction");
+        ctx.predictCurveCheckbox.checked = false;
+        if (ctx.predictCurveLabel) ctx.predictCurveLabel.textContent = "Predict curve";
       }
     }
 
@@ -280,7 +281,7 @@
       return trimmed.replace(/^y\s*=\s*/i, "");
     }
 
-    function buildOverlayYValues(expr, xValues, scopeBuilder) {
+    function buildPredictionYValues(expr, xValues, scopeBuilder) {
       let compiled;
       try {
         compiled = window.math.compile(expr);
@@ -306,18 +307,18 @@
       return { yValues, hasError: !hasValid };
     }
 
-    function updateOverlayTrace(plotId, xValues, yValues, expr) {
+    function updatePredictionTrace(plotId, xValues, yValues, expr) {
       const plotDiv = ctx.root.querySelector(`#${plotId}`);
       if (!plotDiv || !window.Plotly) return;
-      const prevState = ctx.overlayState.get(plotId);
+      const prevState = ctx.predictionState.get(plotId);
       if (!expr) {
         if (prevState) {
           Plotly.deleteTraces(plotDiv, [prevState.traceIndex]);
-          ctx.overlayState.delete(plotId);
+          ctx.predictionState.delete(plotId);
         }
         return;
       }
-      const traceName = `Overlay: ${expr}`;
+      const traceName = `Prediction: ${expr}`;
       if (prevState && plotDiv.data && plotDiv.data[prevState.traceIndex]) {
         Plotly.restyle(plotDiv, { x: [xValues], y: [yValues], name: [traceName] }, [prevState.traceIndex]);
         return;
@@ -331,11 +332,23 @@
         showlegend: false,
         line: { color: "#ff8a00", width: 2, dash: "dash" },
       }).then(() => {
-        ctx.overlayState.set(plotId, { traceIndex });
+        ctx.predictionState.set(plotId, { traceIndex });
       });
     }
 
-    function handleOverlayInput(event) {
+    function setPredictionTraceVisibility(isVisible) {
+      if (!window.Plotly) return;
+      ctx.predictionState.forEach((state, plotId) => {
+        const plotDiv = ctx.root.querySelector(`#${plotId}`);
+        if (!plotDiv || !plotDiv.data || !plotDiv.data[state.traceIndex]) {
+          ctx.predictionState.delete(plotId);
+          return;
+        }
+        Plotly.restyle(plotDiv, { visible: isVisible ? true : "legendonly" }, [state.traceIndex]);
+      });
+    }
+
+    function handlePredictionInput(event) {
       const input = event.target;
       if (!input || !window.math) return;
       const axis = input.getAttribute("data-axis");
@@ -346,14 +359,14 @@
       const rawExpr = normalizeExpression(input.value);
       if (!rawExpr) {
         input.classList.remove("is-error");
-        updateOverlayTrace(plotId, [], [], "");
+        updatePredictionTrace(plotId, [], [], "");
         return;
       }
       let xValues = [];
       if (generic && generic.by_param && generic.by_param[axis]) {
         xValues = generic.by_param[axis].x_values || [];
       }
-      const result = buildOverlayYValues(rawExpr, xValues, (x) => {
+      const result = buildPredictionYValues(rawExpr, xValues, (x) => {
         const scope = { x };
         Object.entries(ctx.patternParams).forEach(([name, value]) => {
           const numeric = Number(value);
@@ -367,7 +380,7 @@
         setScopeValue(scope, axis, Number(x));
         return scope;
       });
-      updateOverlayTrace(plotId, xValues, result.yValues, rawExpr);
+      updatePredictionTrace(plotId, xValues, result.yValues, rawExpr);
       input.classList.toggle("is-error", result.hasError);
     }
 
@@ -420,9 +433,9 @@
         if (grid) grid.innerHTML = "";
       });
       ctx.selectedPlotCards.forEach((setRef) => setRef.clear());
-      ctx.overlayState.clear();
+      ctx.predictionState.clear();
       ctx.dualTraceRegistry.clear();
-      updateOverlayButtonVisibility(false);
+      updatePredictionToggleVisibility(false);
       updateRemoveButtons();
     }
 
@@ -522,7 +535,7 @@
         if (grid) grid.innerHTML = "";
       });
       ctx.selectedPlotCards.forEach((setRef) => setRef.clear());
-      ctx.overlayState.clear();
+      ctx.predictionState.clear();
       ctx.dualTraceRegistry.clear();
       updateRemoveButtons();
 
@@ -530,11 +543,11 @@
         plotGridsByParam.forEach((grid) => {
           if (grid) grid.textContent = "Select dual values to plot.";
         });
-        updateOverlayButtonVisibility(false);
+        updatePredictionToggleVisibility(false);
         return;
       }
 
-      updateOverlayButtonVisibility(true);
+      updatePredictionToggleVisibility(true);
       const grouped = new Map();
       seriesIds.forEach((seriesId) => {
         const generic = ctx.seriesDataByParam[seriesId];
@@ -572,7 +585,7 @@
             const card = document.createElement("div");
             card.className = "dual-plot-card";
             card.setAttribute("data-series-id", seriesId);
-            card.innerHTML = `<div class="dual-plot-card-title">${ctx.formatDualLabel(label)}</div><div id="${plotId}" class="dual-plot-chart"></div><input class="dual-overlay-input" type="text" placeholder="${ctx.randomOverlayPlaceholder()}" data-series-id="${ctx.escapeHtml(seriesId)}" data-axis="${ctx.escapeHtml(param)}" data-plot-id="${plotId}">`;
+            card.innerHTML = `<div class="dual-plot-card-title">${ctx.formatDualLabel(label)}</div><div id="${plotId}" class="dual-plot-chart"></div><input class="dual-prediction-input" type="text" placeholder="${ctx.randomPredictionPlaceholder()}" data-series-id="${ctx.escapeHtml(seriesId)}" data-axis="${ctx.escapeHtml(param)}" data-plot-id="${plotId}">`;
             const container = constraintGridByParam.get(param);
             if (!container) return;
             container.appendChild(card);
@@ -609,14 +622,14 @@
             });
             ctx.dualTraceRegistry.set(plotId, runMap);
             Plotly.newPlot(plotId, traces, { autosize: true, xaxis: { title: "", tickfont: { size: 9 } }, yaxis: { title: "", tickfont: { size: 9 } }, margin: { t: 10, l: 30, r: 10, b: 15 } }, { displayModeBar: false, responsive: true });
-            const overlayInput = card.querySelector(".dual-overlay-input");
-            if (overlayInput) {
-              overlayInput.addEventListener("focus", () => overlayInput.setAttribute("placeholder", ""));
-              overlayInput.addEventListener("click", (event) => event.stopPropagation());
-              overlayInput.addEventListener("input", (event) => {
-                const key = overlayInput.getAttribute("data-plot-id");
-                if (ctx.overlayDebounce.has(key)) clearTimeout(ctx.overlayDebounce.get(key));
-                ctx.overlayDebounce.set(key, setTimeout(() => ctx.ensureMath(() => handleOverlayInput(event)), 250));
+            const predictionInput = card.querySelector(".dual-prediction-input");
+            if (predictionInput) {
+              predictionInput.addEventListener("focus", () => predictionInput.setAttribute("placeholder", ""));
+              predictionInput.addEventListener("click", (event) => event.stopPropagation());
+              predictionInput.addEventListener("input", (event) => {
+                const key = predictionInput.getAttribute("data-plot-id");
+                if (ctx.predictionDebounce.has(key)) clearTimeout(ctx.predictionDebounce.get(key));
+                ctx.predictionDebounce.set(key, setTimeout(() => ctx.ensureMath(() => handlePredictionInput(event)), 250));
               });
             }
           });
@@ -637,7 +650,8 @@
       setActionTab,
       updateClearButton,
       updateRemoveButtons,
-      updateOverlayButtonVisibility,
+      updatePredictionToggleVisibility,
+      setPredictionTraceVisibility,
       setRunToggleButton,
       applyRunVisibilityToTau,
       applyRunVisibilityToDual,
