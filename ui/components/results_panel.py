@@ -31,7 +31,7 @@ RESULTS_WORKSPACE_JS = _assemble_results_workspace_js()
 
 
 RESULTS_WORKSPACE_COMPONENT = components_v2.component(
-    "results_workspace_component_v21",
+    "results_workspace_component_v22",
     html="<div id='results-workspace-root'></div>",
     js=RESULTS_WORKSPACE_JS,
 )

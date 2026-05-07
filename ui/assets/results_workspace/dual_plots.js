@@ -270,7 +270,7 @@
       if (!show && wrapperEl) {
         wrapperEl.classList.remove("dual-show-prediction");
         ctx.predictCurveCheckbox.checked = false;
-        if (ctx.predictCurveLabel) ctx.predictCurveLabel.textContent = "Predict curve";
+        if (ctx.predictCurveLabel) ctx.predictCurveLabel.textContent = "Curve prediction";
       }
     }
 

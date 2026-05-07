@@ -89,6 +89,24 @@
     }
   };
 
+  ns.readTauPredictionVisible = function readTauPredictionVisible() {
+    const key = (ns.constants && ns.constants.TAU_PREDICTION_VISIBLE_KEY) || "tau_prediction_visible";
+    try {
+      return window.sessionStorage.getItem(key) === "1";
+    } catch (err) {
+      return false;
+    }
+  };
+
+  ns.writeTauPredictionVisible = function writeTauPredictionVisible(isVisible) {
+    const key = (ns.constants && ns.constants.TAU_PREDICTION_VISIBLE_KEY) || "tau_prediction_visible";
+    try {
+      window.sessionStorage.setItem(key, isVisible ? "1" : "0");
+    } catch (err) {
+      return;
+    }
+  };
+
   ns.runRowsHtml = function runRowsHtml(runsById, runVisibility) {
     function groupedDeactivatedDualsHtml(labels) {
       const groups = new Map();

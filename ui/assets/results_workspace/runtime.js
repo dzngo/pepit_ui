@@ -22,6 +22,7 @@ function renderResultsWorkspaceRuntime(component) {
     patternConflictParams,
   } = payload;
   const state = ns.createState(dualParams);
+  state.tauPredictionVisible = typeof ns.readTauPredictionVisible === "function" ? ns.readTauPredictionVisible() : state.tauPredictionVisible;
   const {
     plotSelectionMap,
     deactivatedForRecompute,
@@ -147,7 +148,7 @@ function renderResultsWorkspaceRuntime(component) {
         <main class="dual-main">
           <div class="dual-section-title">Worst-case guarantee</div>
           <div class="dual-control-row tau-prediction-control">
-            <label class="dual-checkbox-toggle" id="tau-predict-curve-wrapper"><input type="checkbox" id="tau-predict-curve"> <span id="tau-predict-curve-label">Predict curve</span></label>
+            <label class="dual-checkbox-toggle" id="tau-predict-curve-wrapper"><input type="checkbox" id="tau-predict-curve"> <span id="tau-predict-curve-label">Curve prediction</span></label>
           </div>
           <div class="tau-panels-grid">${tauCtrl.tauPanelsHtml()}</div>
           <div class="dual-section-title">Dual values</div>
@@ -174,7 +175,7 @@ function renderResultsWorkspaceRuntime(component) {
             <div id="tab-panel-plot" class="dual-mode-toolbar" role="tabpanel" aria-labelledby="tab-plot">
               <button type="button" class="dual-plot-button" id="dual-plot" disabled>Plot selected</button>
               <button type="button" class="dual-clear-button" id="dual-clear">Select all</button>
-              <label class="dual-checkbox-toggle" id="dual-predict-curve-wrapper" style="display:none;"><input type="checkbox" id="dual-predict-curve"> <span id="dual-predict-curve-label">Predict curve</span></label>
+              <label class="dual-checkbox-toggle" id="dual-predict-curve-wrapper" style="display:none;"><input type="checkbox" id="dual-predict-curve"> <span id="dual-predict-curve-label">Curve prediction</span></label>
             </div>
             <div id="tab-panel-recompute" class="dual-mode-toolbar dual-mode-toolbar-stacked" role="tabpanel" aria-labelledby="tab-recompute" hidden>
               <div class="dual-selected-header"><div class="dual-selected-title">Deactivated dual values</div></div>
@@ -243,16 +244,17 @@ function renderResultsWorkspaceRuntime(component) {
     if (!wrapperEl || !ctx.predictCurveCheckbox) return;
     wrapperEl.classList.toggle("dual-show-prediction", Boolean(isVisible));
     ctx.predictCurveCheckbox.checked = Boolean(isVisible);
-    if (ctx.predictCurveLabel) ctx.predictCurveLabel.textContent = isVisible ? "Hide prediction" : "Predict curve";
+    if (ctx.predictCurveLabel) ctx.predictCurveLabel.textContent = isVisible ? "Hide prediction" : "Curve prediction";
     dualCtrl.setPredictionTraceVisibility(Boolean(isVisible));
   }
 
   function setTauPredictionVisible(isVisible) {
     ctx.tauPredictionVisible = Boolean(isVisible);
+    if (typeof ns.writeTauPredictionVisible === "function") ns.writeTauPredictionVisible(ctx.tauPredictionVisible);
     ctx.root.querySelectorAll(".tau-pattern-input").forEach((input) => input.setAttribute("placeholder", randomPredictionPlaceholder()));
     if (ctx.tauPredictCurveCheckbox) ctx.tauPredictCurveCheckbox.checked = ctx.tauPredictionVisible;
     if (ctx.tauPredictCurveLabel) {
-      ctx.tauPredictCurveLabel.textContent = ctx.tauPredictionVisible ? "Hide prediction" : "Predict curve";
+      ctx.tauPredictCurveLabel.textContent = ctx.tauPredictionVisible ? "Hide prediction" : "Curve prediction";
     }
     const wrapperEl = ctx.root.querySelector(".dual-wrapper");
     if (wrapperEl) wrapperEl.classList.toggle("dual-show-tau-prediction", ctx.tauPredictionVisible);
